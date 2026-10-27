@@ -1,0 +1,133 @@
+{
+  "name": "clavix-foundational",
+  "version": "0.1.0",
+  "description": "10 foundational tasks across Tier 1 (deterministic), Tier 2 (sequential) and Tier 3 (UI grounding). '{workspace}' is replaced with a fresh per-run directory.",
+  "tasks": [
+    {
+      "task_id": "T1-01",
+      "tier": 1,
+      "description": "Open a website with the default browser.",
+      "command": "open github",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "launch_url",
+         "payload": {"url": "https://github.com"}, "expected_postcondition": null}
+      ],
+      "ground_truth": [{"type": "url_launched", "step_id": 1}]
+    },
+    {
+      "task_id": "T1-02",
+      "tier": 1,
+      "description": "Run a shell command and check its output.",
+      "command": "run echo clavix ready",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "echo clavix ready"}, "expected_postcondition": "stdout_contains:clavix ready"}
+      ],
+      "ground_truth": [{"type": "stdout_contains", "step_id": 1, "text": "clavix ready"}]
+    },
+    {
+      "task_id": "T1-03",
+      "tier": 1,
+      "description": "Write a text file via the shell.",
+      "command": "create a file called note.txt in the workspace containing hello",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "echo hello> \"{workspace}/note.txt\""}, "expected_postcondition": "file_exists:{workspace}/note.txt"}
+      ],
+      "ground_truth": [{"type": "file_contains", "path": "{workspace}/note.txt", "text": "hello"}]
+    },
+    {
+      "task_id": "T1-04",
+      "tier": 1,
+      "description": "Capture a full-screen screenshot.",
+      "command": "take a screenshot and save it to the workspace as screen.png",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "take_screenshot",
+         "payload": {"filepath": "{workspace}/screen.png"}, "expected_postcondition": "file_exists:{workspace}/screen.png"}
+      ],
+      "ground_truth": [{"type": "screenshot_valid", "path": "{workspace}/screen.png"}]
+    },
+    {
+      "task_id": "T2-01",
+      "tier": 2,
+      "description": "Create a folder, then write a file inside it.",
+      "command": "make a folder called reports in the workspace and put a file summary.txt in it saying done",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "mkdir \"{workspace}/reports\""}, "expected_postcondition": "file_exists:{workspace}/reports"},
+        {"step_id": 2, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "echo done> \"{workspace}/reports/summary.txt\""}, "expected_postcondition": "file_exists:{workspace}/reports/summary.txt"}
+      ],
+      "ground_truth": [{"type": "file_contains", "path": "{workspace}/reports/summary.txt", "text": "done"}]
+    },
+    {
+      "task_id": "T2-02",
+      "tier": 2,
+      "description": "Open a website, then confirm aloud.",
+      "command": "open the python docs and tell me when it's open",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "launch_url",
+         "payload": {"url": "https://docs.python.org/3/"}, "expected_postcondition": null},
+        {"step_id": 2, "action_type": "FEEDBACK", "action_name": "speak_feedback",
+         "payload": {"message": "The Python documentation is open."}, "expected_postcondition": null}
+      ],
+      "ground_truth": [{"type": "url_launched", "step_id": 1}]
+    },
+    {
+      "task_id": "T2-03",
+      "tier": 2,
+      "description": "Write a file, then capture a region screenshot.",
+      "command": "save the text checkpoint to log.txt in the workspace, then screenshot the top left corner to corner.png",
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "echo checkpoint> \"{workspace}/log.txt\""}, "expected_postcondition": "exit_code:0"},
+        {"step_id": 2, "action_type": "DETERMINISTIC", "action_name": "take_screenshot",
+         "payload": {"filepath": "{workspace}/corner.png", "target_region": [0, 0, 400, 300]}, "expected_postcondition": "file_exists:{workspace}/corner.png"}
+      ],
+      "ground_truth": [
+        {"type": "file_contains", "path": "{workspace}/log.txt", "text": "checkpoint"},
+        {"type": "screenshot_valid", "path": "{workspace}/corner.png"}
+      ]
+    },
+    {
+      "task_id": "T3-01",
+      "tier": 3,
+      "description": "Launch Notepad and open its File menu via the accessibility tree.",
+      "command": "open notepad and click the file menu",
+      "platforms": ["win32"],
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
+         "payload": {"cmd": "notepad", "detach": true}, "expected_postcondition": "window_title_contains:Notepad"},
+        {"step_id": 2, "action_type": "OS_GROUNDING", "action_name": "click_element",
+         "payload": {"target_label": "File"}, "expected_postcondition": null}
+      ],
+      "ground_truth": [{"type": "process_spawned", "step_id": 1}]
+    },
+    {
+      "task_id": "T3-02",
+      "tier": 3,
+      "description": "Click the Start button by accessible name.",
+      "command": "click the start button",
+      "platforms": ["win32"],
+      "reference_plan": [
+        {"step_id": 1, "action_type": "OS_GROUNDING", "action_name": "click_element",
+         "payload": {"target_label": "Start"}, "expected_postcondition": null}
+      ],
+      "ground_truth": []
+    },
+    {
+      "task_id": "T3-03",
+      "tier": 3,
+      "description": "Screenshot, then click a labelled element with a coordinate fallback.",
+      "command": "take a screenshot to before.png in the workspace, then click the search box",
+      "platforms": ["win32"],
+      "reference_plan": [
+        {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "take_screenshot",
+         "payload": {"filepath": "{workspace}/before.png"}, "expected_postcondition": "file_exists:{workspace}/before.png"},
+        {"step_id": 2, "action_type": "OS_GROUNDING", "action_name": "click_element",
+         "payload": {"target_label": "Search", "fallback_coord": [40, 40]}, "expected_postcondition": null}
+      ],
+      "ground_truth": [{"type": "screenshot_valid", "path": "{workspace}/before.png"}]
+    }
+  ]
+}

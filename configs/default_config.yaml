@@ -1,0 +1,50 @@
+# Clavix default runtime configuration.
+
+planner:
+  provider: ollama            # ollama | gemini | mock
+  model: llama3:8b            # or mistral:7b
+  base_url: http://localhost:11434
+  gemini_model: gemini-2.5-flash
+  gemini_api_key_env: GEMINI_API_KEY
+  timeout_sec: 60
+  temperature: 0.0
+  max_retries: 2              # schema-repair retries after an invalid LLM response
+
+execution:
+  # Coordinate clicks (PyAutoGUI) are the last resort. Keep disabled until
+  # the grounding module is integrated and coordinates are trustworthy.
+  enable_visual_fallback: false
+  # Regexes (case-insensitive) for shell commands the dispatcher refuses to run.
+  blocked_command_patterns:
+    - '\brm\s+-[a-z]*r[a-z]*f'
+    - '\b(format|diskpart|mkfs)\b'
+    - '\bshutdown\b'
+    - '\bdel\s+/[a-z]*s'
+    - '\brmdir\s+/s'
+    - '\breg\s+delete\b'
+    - 'Remove-Item\b.*-Recurse'
+
+verifier:
+  timeout_sec: 5.0            # how long to poll a postcondition before failing
+  poll_interval_sec: 0.25
+
+agent:
+  max_step_retries: 1         # re-dispatch a step whose verification failed
+  speak_summary: true
+
+benchmark:
+  suite_path: configs/benchmark_suite.json
+  output_dir: benchmarks
+
+# Teammate modules. Swap an implementation by changing "class"
+# ("package.module:ClassName"); "options" become constructor kwargs.
+modules:
+  acoustic:                   # Person 2
+    class: clavix.modules.acoustic:ConsoleAcoustic
+    options: {}
+  grounding:                  # Person 3
+    class: clavix.modules.grounding:StubGrounding
+    options: {}
+  feedback:                   # Person 4
+    class: clavix.modules.feedback:ConsoleFeedback
+    options: {}
