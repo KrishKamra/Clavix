@@ -88,37 +88,39 @@ Rules:
 directory. Use relative paths there and never change directory.
 """
 
+# No example may repeat a benchmark command (configs/benchmark_suite.json): the planner would be
+# shown the answer and plan accuracy would be inflated. tests/test_schemas.py enforces this.
 FEW_SHOT_EXAMPLES: list[tuple[str, dict[str, Any]]] = [
     (
-        "open github",
+        "open youtube",
         {
             "steps": [
                 {
                     "step_id": 1,
                     "action_type": "DETERMINISTIC",
                     "action_name": "launch_url",
-                    "payload": {"url": "https://github.com"},
-                    "expected_postcondition": "window_title_contains:GitHub",
+                    "payload": {"url": "https://www.youtube.com"},
+                    "expected_postcondition": "window_title_contains:YouTube",
                 }
             ]
         },
     ),
     (
-        "open notepad and click the file menu",
+        "open paint and click the view menu",
         {
             "steps": [
                 {
                     "step_id": 1,
                     "action_type": "DETERMINISTIC",
                     "action_name": "run_command",
-                    "payload": {"cmd": "notepad", "detach": True},
-                    "expected_postcondition": "window_title_contains:Notepad",
+                    "payload": {"cmd": "mspaint", "detach": True},
+                    "expected_postcondition": "window_title_contains:Paint",
                 },
                 {
                     "step_id": 2,
                     "action_type": "OS_GROUNDING",
                     "action_name": "click_element",
-                    "payload": {"target_label": "File", "fallback_coord": None},
+                    "payload": {"target_label": "View", "fallback_coord": None},
                     "expected_postcondition": None,
                 },
             ]
