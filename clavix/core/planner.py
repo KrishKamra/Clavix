@@ -143,6 +143,43 @@ FEW_SHOT_EXAMPLES: list[tuple[str, dict[str, Any]]] = [
             ]
         },
     ),
+    # Hardening (P1-1): llama3:8b dropped a requested confirmation, so show one after a URL too.
+    (
+        "open wikipedia and let me know once it's up",
+        {
+            "steps": [
+                {
+                    "step_id": 1,
+                    "action_type": "DETERMINISTIC",
+                    "action_name": "launch_url",
+                    "payload": {"url": "https://www.wikipedia.org"},
+                    "expected_postcondition": None,
+                },
+                {
+                    "step_id": 2,
+                    "action_type": "FEEDBACK",
+                    "action_name": "speak_feedback",
+                    "payload": {"message": "Wikipedia is open.", "blocking": False},
+                    "expected_postcondition": None,
+                },
+            ]
+        },
+    ),
+    # Hardening (P1-1): llama3:8b set detach=true on mkdir; one-shot shell commands never detach.
+    (
+        "create a folder named archive",
+        {
+            "steps": [
+                {
+                    "step_id": 1,
+                    "action_type": "DETERMINISTIC",
+                    "action_name": "run_command",
+                    "payload": {"cmd": "mkdir archive", "timeout_sec": 10, "detach": False},
+                    "expected_postcondition": "file_exists:archive",
+                },
+            ]
+        },
+    ),
 ]
 """(command, plan) pairs shown to the model as prior conversation turns."""
 
