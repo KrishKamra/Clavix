@@ -213,6 +213,15 @@ class TestPlanner:
         with pytest.raises(PlanningError, match="ollama down"):
             asyncio.run(Planner(MockLLMClient(responder=boom)).plan("x"))
 
+    def test_few_shot_examples_never_repeat_a_benchmark_command(self) -> None:
+        from clavix.config import resolve_repo_path
+        from clavix.core.planner import FEW_SHOT_EXAMPLES
+
+        suite = json.loads(resolve_repo_path("configs/benchmark_suite.json").read_text(encoding="utf-8"))
+        benchmark = {" ".join(task["command"].casefold().split()) for task in suite["tasks"]}
+        leaked = [cmd for cmd, _ in FEW_SHOT_EXAMPLES if " ".join(cmd.casefold().split()) in benchmark]
+        assert leaked == [], "few-shot examples must not reveal benchmark answers"
+
     def test_prompt_contains_few_shot_and_command(self) -> None:
         messages = build_messages("open github")
         assert messages[0]["role"] == "system"

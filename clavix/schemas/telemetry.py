@@ -118,6 +118,7 @@ class TaskOutcome(BaseModel):
             "recovery_attempts": self.recovery_attempts,
             "n_steps": len(self.plan.steps) if self.plan else 0,
             "error_message": self.error_message,
+            "transcript": self.transcript,
         }
         fields.update(extra)
         return BenchmarkRecord(**fields)
@@ -138,3 +139,13 @@ class BenchmarkRecord(BaseModel):
     planner: str = ""
     error_message: Optional[str] = None
     timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    repetition: int = 0
+    """0-based repetition index when a task runs several times (``--repeat``)."""
+    transcript: str = ""
+    """The command the planner received: the task text, or the ASR transcript with ``--audio``."""
+    transcript_wer: Optional[float] = None
+    """Word error rate of ``transcript`` against the task command (``--audio`` only)."""
+    plan_action_match: Optional[bool] = None
+    """LLM plan has the reference plan's ``(action_name, action_type)`` sequence (LLM mode only)."""
+    plan_exact_match: Optional[bool] = None
+    """``plan_action_match`` and every normalised payload equal (LLM mode only)."""

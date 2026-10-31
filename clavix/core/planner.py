@@ -84,39 +84,43 @@ Rules:
 3. Use VISUAL_FALLBACK only if exact screen coordinates are known.
 4. Add a postcondition whenever the effect can be checked.
 5. Never emit destructive commands (deleting files, formatting disks, shutting down).
+6. Commands run in the user's workspace directory: "in the workspace" means the current \
+directory. Use relative paths there and never change directory.
 """
 
+# No example may repeat a benchmark command (configs/benchmark_suite.json): the planner would be
+# shown the answer and plan accuracy would be inflated. tests/test_schemas.py enforces this.
 FEW_SHOT_EXAMPLES: list[tuple[str, dict[str, Any]]] = [
     (
-        "open github",
+        "open youtube",
         {
             "steps": [
                 {
                     "step_id": 1,
                     "action_type": "DETERMINISTIC",
                     "action_name": "launch_url",
-                    "payload": {"url": "https://github.com"},
-                    "expected_postcondition": "window_title_contains:GitHub",
+                    "payload": {"url": "https://www.youtube.com"},
+                    "expected_postcondition": "window_title_contains:YouTube",
                 }
             ]
         },
     ),
     (
-        "open notepad and click the file menu",
+        "open paint and click the view menu",
         {
             "steps": [
                 {
                     "step_id": 1,
                     "action_type": "DETERMINISTIC",
                     "action_name": "run_command",
-                    "payload": {"cmd": "notepad", "detach": True},
-                    "expected_postcondition": "window_title_contains:Notepad",
+                    "payload": {"cmd": "mspaint", "detach": True},
+                    "expected_postcondition": "window_title_contains:Paint",
                 },
                 {
                     "step_id": 2,
                     "action_type": "OS_GROUNDING",
                     "action_name": "click_element",
-                    "payload": {"target_label": "File", "fallback_coord": None},
+                    "payload": {"target_label": "View", "fallback_coord": None},
                     "expected_postcondition": None,
                 },
             ]
@@ -139,6 +143,43 @@ FEW_SHOT_EXAMPLES: list[tuple[str, dict[str, Any]]] = [
                     "action_name": "speak_feedback",
                     "payload": {"message": "Screenshot saved.", "blocking": False},
                     "expected_postcondition": None,
+                },
+            ]
+        },
+    ),
+    # Hardening (P1-1): llama3:8b dropped a requested confirmation, so show one after a URL too.
+    (
+        "open wikipedia and let me know once it's up",
+        {
+            "steps": [
+                {
+                    "step_id": 1,
+                    "action_type": "DETERMINISTIC",
+                    "action_name": "launch_url",
+                    "payload": {"url": "https://www.wikipedia.org"},
+                    "expected_postcondition": None,
+                },
+                {
+                    "step_id": 2,
+                    "action_type": "FEEDBACK",
+                    "action_name": "speak_feedback",
+                    "payload": {"message": "Wikipedia is open.", "blocking": False},
+                    "expected_postcondition": None,
+                },
+            ]
+        },
+    ),
+    # Hardening (P1-1): llama3:8b set detach=true on mkdir; one-shot shell commands never detach.
+    (
+        "create a folder named archive",
+        {
+            "steps": [
+                {
+                    "step_id": 1,
+                    "action_type": "DETERMINISTIC",
+                    "action_name": "run_command",
+                    "payload": {"cmd": "mkdir archive", "timeout_sec": 10, "detach": False},
+                    "expected_postcondition": "file_exists:archive",
                 },
             ]
         },

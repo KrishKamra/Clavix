@@ -8,6 +8,7 @@
       "tier": 1,
       "description": "Open a website with the default browser.",
       "command": "open github",
+      "audio_fixture": "tests/fixtures/audio/T1-01.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "launch_url",
          "payload": {"url": "https://github.com"}, "expected_postcondition": null}
@@ -19,6 +20,7 @@
       "tier": 1,
       "description": "Run a shell command and check its output.",
       "command": "run echo clavix ready",
+      "audio_fixture": "tests/fixtures/audio/T1-02.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
          "payload": {"cmd": "echo clavix ready"}, "expected_postcondition": "stdout_contains:clavix ready"}
@@ -30,6 +32,7 @@
       "tier": 1,
       "description": "Write a text file via the shell.",
       "command": "create a file called note.txt in the workspace containing hello",
+      "audio_fixture": "tests/fixtures/audio/T1-03.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
          "payload": {"cmd": "echo hello> \"{workspace}/note.txt\""}, "expected_postcondition": "file_exists:{workspace}/note.txt"}
@@ -41,6 +44,7 @@
       "tier": 1,
       "description": "Capture a full-screen screenshot.",
       "command": "take a screenshot and save it to the workspace as screen.png",
+      "audio_fixture": "tests/fixtures/audio/T1-04.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "take_screenshot",
          "payload": {"filepath": "{workspace}/screen.png"}, "expected_postcondition": "file_exists:{workspace}/screen.png"}
@@ -52,6 +56,7 @@
       "tier": 2,
       "description": "Create a folder, then write a file inside it.",
       "command": "make a folder called reports in the workspace and put a file summary.txt in it saying done",
+      "audio_fixture": "tests/fixtures/audio/T2-01.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
          "payload": {"cmd": "mkdir \"{workspace}/reports\""}, "expected_postcondition": "file_exists:{workspace}/reports"},
@@ -65,6 +70,7 @@
       "tier": 2,
       "description": "Open a website, then confirm aloud.",
       "command": "open the python docs and tell me when it's open",
+      "audio_fixture": "tests/fixtures/audio/T2-02.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "launch_url",
          "payload": {"url": "https://docs.python.org/3/"}, "expected_postcondition": null},
@@ -78,6 +84,7 @@
       "tier": 2,
       "description": "Write a file, then capture a region screenshot.",
       "command": "save the text checkpoint to log.txt in the workspace, then screenshot the top left corner to corner.png",
+      "audio_fixture": "tests/fixtures/audio/T2-03.wav",
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
          "payload": {"cmd": "echo checkpoint> \"{workspace}/log.txt\""}, "expected_postcondition": "exit_code:0"},
@@ -94,6 +101,8 @@
       "tier": 3,
       "description": "Launch Notepad and open its File menu via the accessibility tree.",
       "command": "open notepad and click the file menu",
+      "audio_fixture": "tests/fixtures/audio/T3-01.wav",
+      "cleanup_processes": ["notepad.exe"],
       "platforms": ["win32"],
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "run_command",
@@ -108,6 +117,7 @@
       "tier": 3,
       "description": "Click the Start button by accessible name.",
       "command": "click the start button",
+      "audio_fixture": "tests/fixtures/audio/T3-02.wav",
       "platforms": ["win32"],
       "reference_plan": [
         {"step_id": 1, "action_type": "OS_GROUNDING", "action_name": "click_element",
@@ -120,6 +130,7 @@
       "tier": 3,
       "description": "Screenshot, then click a labelled element with a coordinate fallback.",
       "command": "take a screenshot to before.png in the workspace, then click the search box",
+      "audio_fixture": "tests/fixtures/audio/T3-03.wav",
       "platforms": ["win32"],
       "reference_plan": [
         {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "take_screenshot",
