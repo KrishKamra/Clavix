@@ -84,6 +84,8 @@ Rules:
 3. Use VISUAL_FALLBACK only if exact screen coordinates are known.
 4. Add a postcondition whenever the effect can be checked.
 5. Never emit destructive commands (deleting files, formatting disks, shutting down).
+6. Commands run in the user's workspace directory: "in the workspace" means the current \
+directory. Use relative paths there and never change directory.
 """
 
 FEW_SHOT_EXAMPLES: list[tuple[str, dict[str, Any]]] = [
