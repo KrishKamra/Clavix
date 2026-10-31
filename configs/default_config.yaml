@@ -39,9 +39,10 @@ benchmark:
 # Teammate modules. Swap an implementation by changing "class"
 # ("package.module:ClassName"); "options" become constructor kwargs.
 modules:
-  acoustic:                   # Person 2
-    class: clavix.modules.acoustic:ConsoleAcoustic
-    options: {}
+  acoustic:                   # Person 2 (typed input: clavix.modules.acoustic:ConsoleAcoustic)
+    class: clavix.modules.acoustic_whisper:WhisperAcoustic
+    # input_device: null = system default mic; or a sounddevice name such as "WH-CH520 MME".
+    options: {model_size: base.en, device: cpu, compute_type: int8, beam_size: 1, silence_ms: 700, input_device: null}
   grounding:                  # Person 3
     class: clavix.modules.grounding:StubGrounding
     options: {}

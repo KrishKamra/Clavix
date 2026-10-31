@@ -120,8 +120,15 @@ Implementations are selected in `configs/default_config.yaml` under `modules.<na
 so plugging in a module never requires editing core code. Each implementation must pass its
 suite in `clavix/testing/contracts.py`.
 
-Current stand-ins are `ConsoleAcoustic`/`ScriptedAcoustic`, `StubGrounding` (never resolves
-elements; coordinate clicks go through PyAutoGUI) and `ConsoleFeedback`. A HUD abort button
+Acoustic input is integrated: `WhisperAcoustic` (microphone, energy endpointing,
+Faster-Whisper `base.en`) is the default, so interactive `uv run clavix` listens for speech
+(`uv sync --extra acoustic`; wait for the `listening` line). Pick a microphone with
+`input_device` in a git-ignored `configs/local.yaml` and pass `--config configs/local.yaml`.
+For typed input, set the class back to `clavix.modules.acoustic:ConsoleAcoustic`.
+
+Current stand-ins are `StubGrounding` (never resolves elements; coordinate clicks go through
+PyAutoGUI) and `ConsoleFeedback`. The benchmark passes text commands, so it doesn't use the
+microphone. A HUD abort button
 calls `FeedbackInterface.request_abort()`. Until grounding is integrated, Tier 3 benchmark
 tasks are expected to fail. That failure is the baseline.
 

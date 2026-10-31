@@ -19,6 +19,7 @@ acoustic = [
     "faster-whisper>=1.0.0",
     "sounddevice>=0.4.6",
     "numpy>=1.26.0",
+    "av<19",  # faster-whisper 1.2.1's decode_audio passes metadata_errors, removed in PyAV 19
 ]
 grounding = [
     "uiautomation>=2.0.18; sys_platform == 'win32'",
