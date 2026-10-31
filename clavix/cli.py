@@ -31,6 +31,11 @@ async def _run(command: str | None, config_path: str | None, show_states: bool) 
         outcome = await agent.run()
         if outcome.error_message and outcome.error_message.startswith("EOF"):
             return 0
+        print(
+            f"[clavix] heard {outcome.transcript!r}: asr {outcome.t_asr_ms:.0f} ms, "
+            f"llm {outcome.t_llm_planning_ms:.0f} ms, exec {outcome.t_total_execution_ms:.0f} ms",
+            flush=True,  # show it immediately even when stdout is piped (e.g. to Tee-Object)
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -43,6 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     harden_stdio()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
+    if not args.verbose:
+        logging.getLogger("clavix").setLevel(logging.INFO)  # e.g. the microphone's "listening" cue
     try:
         return asyncio.run(_run(args.command, args.config, args.states))
     except KeyboardInterrupt:

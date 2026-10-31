@@ -47,10 +47,18 @@ anyone else: every module is testable with the fakes and contract suites that al
 | P1-2 | P1    | Benchmark repetitions and process cleanup                         | `--repeat N`, `--cleanup` work; p95 is meaningful               |
 | P1-3 | P1    | CI pipeline                                                       | ruff, mypy and pytest run on every PR (Windows and Ubuntu)      |
 
+**Status (2026-11-01): P2 is done.**
+- P2-M1 and P2-M3: 10 human-recorded fixtures; `base.en` WER 0.000 and `t_asr_ms` median
+  386 / p95 438 ms on CPU (see `tests/fixtures/audio/README.md`).
+- P2-M2: live sign-off with the WH-CH520 headset: 10 spoken commands in a row, all captured;
+  9 exact and 1 word wrong ("node.txt"). Live `t_asr_ms` median 395 / p95 434 ms.
+
 ## Phase 3: Integration (Person 1 leads)
 
 Order: **P4, then P3, then P2**. Feedback carries the least risk, and acoustic changes the
-input path, so it goes last.
+input path, so it goes last. Exception: P2 finished first and is integrated already
+(`WhisperAcoustic` is the default acoustic module). It only affects voice input; the benchmark
+still passes text commands until P1-4 adds `--audio`.
 
 1. Merge the member's PR once their contract suite and CI pass.
 2. P1 switches the module's `class` in `configs/default_config.yaml`.

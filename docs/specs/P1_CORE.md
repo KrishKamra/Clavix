@@ -80,7 +80,10 @@ Create `.github/workflows/ci.yml`:
    e.g. `tests/fixtures/audio/T1-01.wav`.
 2. Add `--audio`: for each task, build the configured acoustic class with
    `cls.from_wav_files([fixture], **options)` (a classmethod P2 provides; see the P2 spec, §6).
-   Then call `agent.run()` with no command, so the transcript comes from ASR.
+   Then call `agent.run()` with no command, so the transcript comes from ASR. Call
+   `acoustic.warmup()` (when the class has it) before the timed run: the first call otherwise
+   includes the model load (about 1.3 s for `base.en`) and inflates p95. Loaded models are
+   shared between instances, so a fresh instance per task is cheap after the first.
 3. Add `transcript: str` and `transcript_wer: Optional[float]` to `BenchmarkRecord`.
    Implement `word_error_rate(reference, hypothesis)` in `metrics.py` as a word-level
    Levenshtein distance over normalized text (casefold, strip punctuation). Don't add a
