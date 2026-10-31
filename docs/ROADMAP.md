@@ -43,8 +43,8 @@ anyone else: every module is testable with the fakes and contract suites that al
 | P4-M1 | P4    | `TTSFeedback` (non-blocking queue on a dedicated thread)          | `FeedbackContract` passes                                       |
 | P4-M2 | P4    | Glass HUD per [design/HUD_DESIGN.md](design/HUD_DESIGN.md)        | HUD_DESIGN.md §7 checklist; Stop aborts a running task          |
 | P4-M3 | P4    | Global double-Escape abort hotkey                                 | Manual check: double-Esc during a run aborts it                 |
-| P1-1 | P1    | Planner accuracy metric and prompt hardening                      | `plan_match` column in results; see P1 spec                     |
-| P1-2 | P1    | Benchmark repetitions and process cleanup                         | `--repeat N`, `--cleanup` work; p95 is meaningful               |
+| P1-1 | P1    | Planner accuracy metric and prompt hardening                      | Done: see the status below                                      |
+| P1-2 | P1    | Benchmark repetitions and process cleanup                         | Done: `--repeat N`, `--cleanup` (verified on Tier 3)            |
 | P1-3 | P1    | CI pipeline                                                       | ruff, mypy and pytest run on every PR (Windows and Ubuntu)      |
 | P1-7 | P1    | HUD design system and `FeedbackInterface.on_event` progress events | Done: `docs/design/HUD_DESIGN.md`, reference UI, contract tests |
 
@@ -53,6 +53,24 @@ anyone else: every module is testable with the fakes and contract suites that al
   386 / p95 438 ms on CPU (see `tests/fixtures/audio/README.md`).
 - P2-M2: live sign-off with the WH-CH520 headset: 10 spoken commands in a row, all captured;
   9 exact and 1 word wrong ("node.txt"). Live `t_asr_ms` median 395 / p95 434 ms.
+
+**Status (2026-11-01): P1-1 to P1-4 are done** (`llama3:8b`, `--repeat 3 --cleanup`, 30 runs each;
+Tier 3 needs P3's grounding):
+
+| Prompt | Tier 1 | Tier 2 | Plan action / exact match |
+|---|---|---|---|
+| Phase 1 prompt | 12/12 | 6/9 | 90 % / 40 % |
+| + 2 hardening examples | 9/12 | 9/9 | 90 % / 40 % |
+| + workspace rule | 12/12 | 9/9 | 100 % / 40 % |
+| + no benchmark commands in examples (current) | 12/12 | 9/9 | 90 % / 30 % |
+
+- The hardening examples fixed the dropped confirmation and `detach` on `mkdir` (Tier 2 to 9/9), but
+  the `mkdir` example made the model add `cd workspace` to T1-03; the workspace rule fixed that.
+- Two Phase 1 few-shot examples were T1-01 and T3-01 verbatim. Without them, T3-02 is planned as
+  `VISUAL_FALLBACK` without coordinates; recheck once grounding lands. A test now blocks leaks.
+- `--audio --planner llm`: 10/10 transcripts exact, `t_asr_ms` recorded for every task. T1-02
+  failed only in audio mode: the transcript's capitals and full stop ("Clavix Ready.") reached the
+  `echo` command.
 
 ## Phase 3: Integration (Person 1 leads)
 
