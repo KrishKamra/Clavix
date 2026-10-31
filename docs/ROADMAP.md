@@ -9,7 +9,7 @@ produces the evaluation results for the paper.
 | Person 1 | Core, planner, execution, evaluation, integration | [specs/P1_CORE.md](specs/P1_CORE.md)              | `clavix/` except the files below; `configs/`; `docs/`      |
 | Person 2 | Acoustic ingestion (VAD + Faster-Whisper)   | [specs/P2_ACOUSTIC.md](specs/P2_ACOUSTIC.md)            | `clavix/modules/acoustic_whisper.py`, `tests/test_acoustic_whisper.py`, `tests/fixtures/audio/`, `scripts/record_fixture.py` |
 | Person 3 | Structural grounding (Windows UI Automation) | [specs/P3_GROUNDING.md](specs/P3_GROUNDING.md)         | `clavix/modules/grounding_uia.py`, `tests/test_grounding_uia.py` |
-| Person 4 | Feedback (TTS) and safety HUD               | [specs/P4_FEEDBACK_HUD.md](specs/P4_FEEDBACK_HUD.md)    | `clavix/modules/feedback_tts.py`, `clavix/modules/hud.py`, `tests/test_feedback_tts.py` |
+| Person 4 | Feedback (TTS) and safety HUD               | [specs/P4_FEEDBACK_HUD.md](specs/P4_FEEDBACK_HUD.md)    | `clavix/modules/feedback_tts.py`, `clavix/modules/hud.py`, `clavix/modules/hud_web/`, `tests/test_feedback_tts.py` |
 
 The interface files `clavix/modules/acoustic.py`, `grounding.py` and `feedback.py` belong to
 Person 1. They are **frozen contracts**; change them only through the process in
@@ -41,11 +41,12 @@ anyone else: every module is testable with the fakes and contract suites that al
 | P3-M1 | P3    | `UIAGrounding.resolve_element` and `list_window_titles`           | `GroundingContract` passes with `known_label = "Start"`         |
 | P3-M2 | P3    | `invoke_element` (Invoke / ExpandCollapse / Toggle / click)       | Desktop tests: Notepad "File" menu opens; Start menu opens      |
 | P4-M1 | P4    | `TTSFeedback` (non-blocking queue on a dedicated thread)          | `FeedbackContract` passes                                       |
-| P4-M2 | P4    | Safety HUD (state, last message, Abort button)                    | Manual check: HUD mirrors states; Abort stops a running task    |
+| P4-M2 | P4    | Glass HUD per [design/HUD_DESIGN.md](design/HUD_DESIGN.md)        | HUD_DESIGN.md §7 checklist; Stop aborts a running task          |
 | P4-M3 | P4    | Global double-Escape abort hotkey                                 | Manual check: double-Esc during a run aborts it                 |
 | P1-1 | P1    | Planner accuracy metric and prompt hardening                      | `plan_match` column in results; see P1 spec                     |
 | P1-2 | P1    | Benchmark repetitions and process cleanup                         | `--repeat N`, `--cleanup` work; p95 is meaningful               |
 | P1-3 | P1    | CI pipeline                                                       | ruff, mypy and pytest run on every PR (Windows and Ubuntu)      |
+| P1-7 | P1    | HUD design system and `FeedbackInterface.on_event` progress events | Done: `docs/design/HUD_DESIGN.md`, reference UI, contract tests |
 
 **Status (2026-11-01): P2 is done.**
 - P2-M1 and P2-M3: 10 human-recorded fixtures; `base.en` WER 0.000 and `t_asr_ms` median
