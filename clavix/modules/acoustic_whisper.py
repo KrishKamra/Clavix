@@ -257,6 +257,7 @@ class MicrophoneSource(AudioSource):
         self._calibrate_frames = max(0, math.ceil(calibrate_sec * 1000 / _FRAME_MS))
         self._threshold: float | None = None if self._calibrate_frames else energy_threshold
         self._abort = threading.Event()
+        self._closer: threading.Thread | None = None
 
     @property
     def threshold(self) -> float | None:
@@ -268,7 +269,7 @@ class MicrophoneSource(AudioSource):
         self._abort.set()
 
     def read_utterance(self) -> tuple[FloatAudio, float]:
-        """Open the input stream, wait for one utterance, and close the stream.
+        """Open the input stream, wait for one utterance, and close the stream in the background.
 
         Raises:
             InterruptedError: If :meth:`abort` was called while waiting.
@@ -293,14 +294,18 @@ class MicrophoneSource(AudioSource):
             max_utterance_sec=self._max_utterance_sec,
         )
         ambient: list[FloatAudio] = []
-        with sd.InputStream(
+        if self._closer is not None:
+            self._closer.join()  # the previous stream must be closed before the device reopens
+        stream = sd.InputStream(
             samplerate=_SAMPLE_RATE,
             blocksize=_FRAME_SAMPLES,
             device=self._input_device,
             channels=1,
             dtype="float32",
             callback=callback,
-        ) as stream:
+        )
+        stream.start()
+        try:
             if self._threshold is not None:
                 endpointer.threshold = self._threshold
                 logger.info("listening (threshold %.4f)", self._threshold)
@@ -323,6 +328,11 @@ class MicrophoneSource(AudioSource):
                 if endpointer.feed(frame):
                     t_end = time.perf_counter()
                     return endpointer.audio, t_end
+        finally:
+            # Closing can take ~0.6 s (e.g. Bluetooth headsets on MME); keep it off the
+            # path between end of speech and transcription.
+            self._closer = threading.Thread(target=stream.close, name="clavix-mic-close", daemon=True)
+            self._closer.start()
 
 
 class WhisperAcoustic(AcousticInterface):

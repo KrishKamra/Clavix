@@ -141,27 +141,32 @@ class TestEndpointer:
 class FakeSoundDevice(types.ModuleType):
     """Stands in for ``sounddevice``: each stream replays the next scripted frame list."""
 
-    def __init__(self, scripts: list[list[np.ndarray]]) -> None:
+    def __init__(self, scripts: list[list[np.ndarray]], close_sec: float = 0.0) -> None:
         super().__init__("sounddevice")
         self.scripts = scripts
         self.opened: list[dict[str, Any]] = []
+        self.open_streams = 0
+        self.max_open_streams = 0
         fake = self
 
         class InputStream:
             def __init__(self, **kwargs: Any) -> None:
                 fake.opened.append(kwargs)
+                fake.open_streams += 1
+                fake.max_open_streams = max(fake.max_open_streams, fake.open_streams)
                 self._callback = kwargs["callback"]
                 self._frames = fake.scripts.pop(0)
-                self.active = True
+                self.active = False
 
-            def __enter__(self) -> InputStream:
+            def start(self) -> None:
+                self.active = True
                 for frame in self._frames:
                     self._callback(frame[:, None], len(frame), None, None)
                 self.active = False  # script exhausted: the stream has stopped
-                return self
 
-            def __exit__(self, *exc: object) -> None:
-                self.active = False
+            def close(self) -> None:
+                acoustic_whisper.time.sleep(close_sec)
+                fake.open_streams -= 1
 
         self.InputStream = InputStream
 
@@ -194,6 +199,19 @@ class TestMicrophoneSource:
             "dtype": "float32",
             "callback": None,
         }
+
+    def test_slow_close_is_off_the_critical_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        utterance = [LOUD] * 4 + [SILENCE] * 3
+        sd = FakeSoundDevice([list(utterance), list(utterance)], close_sec=0.5)
+        monkeypatch.setitem(sys.modules, "sounddevice", sd)
+        source = MicrophoneSource(silence_ms=90, min_speech_ms=60, pre_roll_ms=0, calibrate_sec=0)
+
+        started = acoustic_whisper.time.perf_counter()
+        source.read_utterance()
+        assert acoustic_whisper.time.perf_counter() - started < 0.3  # did not wait for close()
+        assert sd.open_streams == 1  # still closing in the background
+        source.read_utterance()
+        assert sd.max_open_streams == 1  # the second read waited for the first close
 
     def test_dead_stream_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "sounddevice", FakeSoundDevice([[SILENCE] * 3]))
