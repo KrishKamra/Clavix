@@ -44,8 +44,13 @@ uv run clavix "open github"                 # one command
 uv run clavix --states                      # interactive; prints state transitions
 uv run clavix-bench --planner reference     # benchmark execution with reference plans
 uv run clavix-bench --planner llm --tiers 1 2
+uv run clavix-bench --planner llm --repeat 5 --cleanup          # 5 runs per task; close apps it opened
+uv run clavix-bench --planner llm --audio --repeat 5 --cleanup  # commands spoken from tests/fixtures/audio
 uv run python -m clavix.evaluation.metrics benchmarks/results_<run>.csv --out benchmarks/summary
 ```
+
+`--audio` needs `uv sync --extra acoustic`. With `--planner llm`, results also report plan accuracy
+against the reference plans; with `--audio`, the transcript and its word error rate.
 
 `--planner reference` replaces the LLM with each task's reference plan, so the run measures
 execution and verification only. `--planner llm` plans from the raw command text. Results

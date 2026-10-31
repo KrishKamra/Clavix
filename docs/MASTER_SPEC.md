@@ -185,3 +185,5 @@ Maintain strict typing, explicit docstrings, and modular decoupling throughout.
 | Retries | not specified | Up to `agent.max_step_retries` per step, but only for `retryable` failures | Re-dispatching a step that never acted only inflates `recovery_attempts` |
 | Wiring | not specified | `clavix/runtime.py` builds everything from `configs/default_config.yaml` (`modules.*.class`) | Teammates plug in by config, not by editing core code |
 | Additions | none | `clavix/cli.py`, `clavix/config.py`, `clavix/runtime.py`, `clavix/testing/` (fakes + contract suites), safety command blocklist | Developer experience and safety |
+| Benchmark working directory | not specified | Each task runs with its own workspace (`runs/<run_id>/workspace/<task>-<rep>`) as the current directory | An LLM can't know the workspace path, so "note.txt in the workspace" becomes a relative path; without this it lands in the repo root and ground truth can never pass |
+| Audio benchmark | `--audio` for every task | Tasks without an `audio_fixture` are skipped with a warning | Recordings are optional per task; a missing file is not a task failure |
