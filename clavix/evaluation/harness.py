@@ -266,7 +266,8 @@ class BenchmarkHarness:
         self.config = config
         self.planner_mode = planner_mode
         self.audio = audio
-        self.output_dir = Path(output_dir) if output_dir else resolve_repo_path(config.benchmark.output_dir)
+        output = Path(output_dir) if output_dir else resolve_repo_path(config.benchmark.output_dir)
+        self.output_dir = output.resolve()  # absolute: tasks run with their workspace as the cwd
         self.runtime = build_runtime(
             config, grounding=grounding, feedback=feedback, native=native, verifier=verifier
         )
@@ -358,9 +359,10 @@ class BenchmarkHarness:
                 workspace.mkdir(parents=True, exist_ok=True)
                 names = (task.cleanup_processes or []) if cleanup else []
                 before = list_pids(names)
+                resolved = task.resolve(workspace)  # before the chdir, so paths never depend on the cwd
                 try:
                     with _working_directory(workspace):
-                        report = await self.run_task(task.resolve(workspace), repetition=rep)
+                        report = await self.run_task(resolved, repetition=rep)
                 finally:
                     if names:
                         kill_pids(list_pids(names) - before)

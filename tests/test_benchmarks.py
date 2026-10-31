@@ -432,6 +432,24 @@ class TestRepetitionsAndWorkspaces:
         assert report.record.task_success  # ground truth reads {workspace}/a.txt
         assert (report.record.plan_action_match, report.record.plan_exact_match) == (True, False)
 
+    def test_relative_output_dir_keeps_ground_truth_paths_correct(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression: a relative --output used to resolve against the task workspace, doubling the path.
+        monkeypatch.chdir(tmp_path)
+        harness = BenchmarkHarness(
+            mini_suite(),
+            ClavixConfig(),
+            output_dir="out",
+            native=FakeNativeOps(),
+            grounding=FakeGrounding(),
+            feedback=RecordingFeedback(),
+            verifier=StateVerifier(timeout_sec=0.5, poll_interval_sec=0.05, window_titles=lambda: []),
+        )
+        (report,) = asyncio.run(harness.run(tiers=[1]))
+        assert report.record.task_success, report.record.error_message
+        assert (tmp_path / "out" / "runs" / harness.run_id / "workspace" / "A-0" / "a.txt").exists()
+
     def test_reference_mode_records_no_plan_match(self, harness: BenchmarkHarness) -> None:
         (report,) = asyncio.run(harness.run(tiers=[1]))
         assert report.record.plan_action_match is None
