@@ -107,8 +107,6 @@ For each member module, in the order **P4, then P3, then P2**:
 - A `type_text` and `press_keys` action (new `ActionName` values, payload models, dispatcher
   routes and grounding contract methods). This is a contract change, so announce it before
   starting.
-- Step-level HUD events, such as `on_step_start` and `on_step_end` on `FeedbackInterface`.
-  Do this only if P4 requests it.
 - AT-SPI grounding for Linux.
 
 ## 4. Rules for P1 changes

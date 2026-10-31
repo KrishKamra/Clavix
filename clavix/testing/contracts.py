@@ -30,7 +30,7 @@ import pytest
 
 from clavix.core.state_machine import TRANSITIONS
 from clavix.modules.acoustic import AcousticInterface, Transcript
-from clavix.modules.feedback import FeedbackInterface
+from clavix.modules.feedback import AgentEvent, FeedbackInterface
 from clavix.modules.grounding import GroundingInterface
 
 
@@ -148,6 +148,28 @@ class FeedbackContract:
                     await impl.on_state_change(source.value, target.value)
 
         asyncio.run(walk())
+
+    def test_accepts_every_event_type_quickly(self, impl: FeedbackInterface) -> None:
+        events: list[AgentEvent] = [
+            {"type": "transcript", "text": "open notepad", "asr_ms": 395.0, "confidence": 0.9},
+            {
+                "type": "plan",
+                "steps": [{"id": 1, "action": "run_command", "verb": "Run", "target": "notepad"}],
+                "llm_ms": 4460.0,
+            },
+            {"type": "step", "id": 1, "status": "running", "attempt": 0},
+            {"type": "step", "id": 1, "status": "ok", "attempt": 0},
+            {"type": "timing", "asr_ms": 395.0, "llm_ms": 4460.0, "exec_ms": 120.0, "success": True},
+            {"type": "future-event", "anything": [1, 2]},  # unknown types must be ignored
+        ]
+
+        async def send() -> None:
+            for event in events:
+                await impl.on_event(event)
+
+        start = time.monotonic()
+        asyncio.run(send())
+        assert time.monotonic() - start <= self.nonblocking_budget_sec
 
     def test_request_abort_calls_bound_callback(self, impl: FeedbackInterface) -> None:
         calls: list[int] = []

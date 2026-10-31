@@ -25,7 +25,7 @@ of 0.7 s ends the clip. Opening the input stream takes about 0.7 s on Windows, a
 stream also spends 0.5 s measuring room noise.
 
 `--synthesize` renders the commands with a Windows SAPI voice instead. Use it only as a
-placeholder: clean TTS is easier than real speech.
+placeholder: synthetic speech is not a proxy for users (base.en WER 4.7 % synthetic vs 0.0 % human; tiny.en 6.8 % vs 17.5 %).
 
 ## Results (2026-10-31)
 

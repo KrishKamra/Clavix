@@ -6,23 +6,27 @@
 
 Implement `TTSFeedback`, a `FeedbackInterface` that:
 - speaks messages without stalling the agent loop;
-- optionally shows an always-on-top HUD with the agent's live state and an **Abort** button;
+- optionally shows the **glass HUD**: an always-on-top overlay with the agent's live state, transcript,
+  plan steps, latency ribbon and a **Stop** button, built exactly to
+  [`docs/design/HUD_DESIGN.md`](../design/HUD_DESIGN.md);
 - listens for a global double-Escape hotkey that aborts the running task.
 
 ## 2. Read first, in this order
 
 1. `AGENTS.md`.
 2. `clavix/modules/feedback.py`: **your contract**. Do not edit it.
-3. `clavix/core/state_machine.py`: `AgentState`, `TRANSITIONS`, and where `speak` and
+3. `docs/design/HUD_DESIGN.md` and `docs/design/hud_reference/index.html` (open it with `?demo`): the
+   HUD's design system, architecture, window recipe and protocol. Decided and prototyped; build it as written.
+4. `clavix/core/state_machine.py`: `AgentState`, `TRANSITIONS`, and where `speak` and
    `on_state_change` are called (`_announce`, `_transition`).
-4. `clavix/execution/dispatcher.py`: `abort()`, and the `speak_feedback` route (`_dispatch_feedback`).
-5. `clavix/testing/contracts.py`, class `FeedbackContract`.
+5. `clavix/execution/dispatcher.py`: `abort()`, and the `speak_feedback` route (`_dispatch_feedback`).
+6. `clavix/testing/contracts.py`, class `FeedbackContract`.
 
 ## 3. Ownership
 
 | Action            | Paths |
 |-------------------|-------|
-| Create and own    | `clavix/modules/feedback_tts.py`, `clavix/modules/hud.py`, `tests/test_feedback_tts.py` |
+| Create and own    | `clavix/modules/feedback_tts.py`, `clavix/modules/hud.py`, `clavix/modules/hud_web/` (HTML/CSS/JS), `tests/test_feedback_tts.py` |
 | Never edit        | `clavix/modules/feedback.py`, any other file under `clavix/` and `configs/` |
 
 ## 4. The contract (verbatim from `clavix/modules/feedback.py`)
@@ -32,6 +36,7 @@ class FeedbackInterface(ABC):
     @abstractmethod
     async def speak(self, message: str, blocking: bool = False) -> None: ...
     async def on_state_change(self, previous: str, current: str) -> None: ...  # default no-op
+    async def on_event(self, event: AgentEvent) -> None: ...                    # default no-op
     def bind_abort(self, abort: Callable[[], None]) -> None: ...   # stores the callback; do NOT override
     def request_abort(self) -> None: ...                            # calls it; do NOT override
 ```
@@ -42,13 +47,16 @@ class FeedbackInterface(ABC):
   as strings. The states are `IDLE`, `ACOUSTIC_INGESTION`, `PLANNING`, `DISPATCHING`,
   `VERIFYING`, `FEEDBACK`, `COMPLETED` and `FAILED`. It must return quickly and must never raise;
   exceptions are logged and swallowed by the agent, but they are bugs.
+- `on_event(event)`: structured progress (`transcript`, `plan`, `step`, `timing`; see `AgentEvent` in
+  `feedback.py`). Same rules as `on_state_change`: return quickly, never raise. Forward it to the HUD unchanged.
 - `bind_abort` is called once by `clavix/runtime.py:build_runtime` with `Dispatcher.abort`,
   which is thread-safe. Your HUD button and your hotkey call `self.request_abort()`.
 
 ## 5. Dependencies
 
 Already declared as the `feedback` extra: `pyttsx3>=2.90` (lockfile: 2.99) and `pynput>=1.7.6`
-(lockfile: 1.8.2). The HUD uses `tkinter` from the standard library.
+(lockfile: 1.8.2), plus `pywebview>=6.2` on Windows (lockfile: 6.2.1) for the HUD. The HUD renders
+with the WebView2 runtime that ships with Windows 11. Don't use tkinter.
 
 ```powershell
 uv sync --extra feedback
@@ -103,21 +111,21 @@ modules:
   `[clavix] <message>`. Never raise from `speak`.
 - On abort (see 7.3), clear pending non-blocking jobs and call `engine.stop()`.
 
-### 7.2 HUD (P4-M2), `clavix/modules/hud.py`
+### 7.2 HUD (P4-M2): `clavix/modules/hud.py` + `clavix/modules/hud_web/`
 
-- Class `SafetyHUD(on_abort: Callable[[], None])` with methods `start()`,
-  `update_state(state: str)`, `update_message(text: str)` and `close()`.
-- Tk is **not** thread-safe. Run the whole Tk mainloop on its own daemon thread, and create
-  every widget on that thread. Other threads only put updates on a `queue.Queue`, which the
-  Tk thread drains every 50 ms with `root.after(50, ...)`.
-- Window: always on top (`root.attributes("-topmost", True)`), no taskbar entry
-  (`root.overrideredirect(True)`), about 280×90 px, top-right corner, `-alpha 0.9`.
-- Contents: the state name, colour-coded (IDLE grey; PLANNING, DISPATCHING and VERIFYING
-  blue; COMPLETED green; FAILED red), the last spoken message (truncated to 80 characters),
-  and a red **Abort** button. The button is enabled only in non-terminal states; pressing it
-  calls `on_abort`.
-- `TTSFeedback.on_state_change` forwards to `update_state`, and `speak` forwards to
-  `update_message`.
+Build it exactly as [`docs/design/HUD_DESIGN.md`](../design/HUD_DESIGN.md) specifies. The key points:
+
+- `python -m clavix.modules.hud` runs the HUD in **its own process** (pywebview must own that process's
+  main thread). It reads JSON lines from stdin and writes `ready` / `abort` lines to stdout.
+- `SafetyHUD(on_abort)` keeps `start()`, `update_state(state)`, `update_message(text)` and `close()`,
+  and adds `update_event(event)`. Each one only writes a line to the pipe: never block, never raise,
+  and drop messages if the process has died (log once).
+- `TTSFeedback.on_state_change`, `speak` and `on_event` forward to the HUD. An `abort` line calls
+  `self.request_abort()`.
+- Apply the window recipe in HUD_DESIGN.md §3 in full: no focus, excluded from capture, real Acrylic,
+  and the window title **"Clavix HUD"**, which P3's grounding relies on to skip it.
+- `hud_web/index.html` starts as a copy of `docs/design/hud_reference/index.html`. Keep its tokens, states
+  and protocol in sync with the design doc.
 
 ### 7.3 Global abort hotkey (P4-M3)
 
@@ -168,16 +176,19 @@ Also write **unmarked** unit tests that inject a fake engine. Give the construct
   presses further apart don't; nothing aborts in a terminal state.
 - `close()` is idempotent.
 
-Do not unit-test the HUD's Tk widgets in CI. Add one `desktop` smoke test that starts the HUD,
-sends three state updates and closes it.
+Don't unit-test the HUD window in CI. Test `SafetyHUD` against a fake process (valid JSON lines,
+no blocking or raising after the process dies, `abort` lines reach `on_abort`), and add one `desktop`
+smoke test as described in HUD_DESIGN.md §7.
 
 ## 9. Definition of done
 
 - [ ] `FeedbackContract` passes (`uv run pytest tests/test_feedback_tts.py`).
 - [ ] `uv run pytest -m "not desktop"` passes on Linux without audio.
 - [ ] `ruff`, `ruff format --check` and `mypy` are clean.
-- [ ] Manual check: with `show_hud: true`, `uv run clavix "open github"` shows
-      PLANNING, then DISPATCHING, then COMPLETED in the HUD, and speaks the summary.
+- [ ] Every item in HUD_DESIGN.md §7 (HUD look, no focus, capture exclusion, Stop and double-Esc, and the
+      measured cost noted in the PR).
+- [ ] Manual check: with `show_hud: true`, `uv run clavix "open github"` shows Thinking, then Acting,
+      then Done in the HUD, and speaks the summary.
 - [ ] Manual check: during `uv run clavix-bench --planner reference --tiers 3`, pressing Abort
       or double-Esc ends the task as FAILED with "aborted" in the error.
 - [ ] No file outside §3 is modified.
@@ -186,4 +197,3 @@ sends three state updates and closes it.
 
 - Confirmation prompts before risky actions (a contract change; raise it with P1 for Phase 3).
 - Neural or online TTS voices.
-- Step-level HUD details (current action). That needs new contract events; request them from P1 (backlog P1-6).

@@ -126,6 +126,10 @@ Accept a candidate only if its score is at least `min_match_score`.
 - `IsEnabled` is false.
 - `IsOffscreen` is true.
 - Its bounding rect has zero width or height.
+- It is inside Clavix's own HUD: the top-level window whose `Name` is **`"Clavix HUD"`**. That window
+  has a "Stop" button and status text, and must never be matched or clicked. Skip that top-level
+  window entirely in every scope; it never takes focus, so it is never the foreground scope
+  (see `docs/design/HUD_DESIGN.md` §6).
 
 **Search scopes**, in order. Stop at the first scope that yields an accepted candidate:
 1. The foreground top-level window: `auto.GetForegroundControl().GetTopLevelControl()`.

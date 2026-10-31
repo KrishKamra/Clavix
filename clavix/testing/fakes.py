@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from clavix.execution.native_ops import NativeOps
-from clavix.modules.feedback import FeedbackInterface
+from clavix.modules.feedback import AgentEvent, FeedbackInterface
 from clavix.modules.grounding import GroundingInterface, UIElement
 from clavix.schemas.actions import ActionType, ExecutionResult
 
@@ -47,17 +47,21 @@ class FakeNativeOps(NativeOps):
 
 
 class RecordingFeedback(FeedbackInterface):
-    """Collects spoken messages and state transitions."""
+    """Collects spoken messages, state transitions and progress events."""
 
     def __init__(self) -> None:
         self.messages: list[str] = []
         self.states: list[tuple[str, str]] = []
+        self.events: list[AgentEvent] = []
 
     async def speak(self, message: str, blocking: bool = False) -> None:
         self.messages.append(message)
 
     async def on_state_change(self, previous: str, current: str) -> None:
         self.states.append((previous, current))
+
+    async def on_event(self, event: AgentEvent) -> None:
+        self.events.append(event)
 
 
 class FakeGrounding(GroundingInterface):

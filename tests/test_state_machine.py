@@ -364,6 +364,61 @@ class TestAgentLoop:
         outcome = asyncio.run(agent.run("x"))
         assert feedback.states == [(t.from_state, t.to_state) for t in outcome.transitions]
 
+    def test_progress_events_describe_a_successful_run(
+        self, make_agent, feedback: RecordingFeedback, grounding: FakeGrounding
+    ) -> None:
+        click = mk(
+            2, action_type="OS_GROUNDING", action_name="click_element", payload={"target_label": "File"}
+        )
+        agent, _ = make_agent(plan(mk(1, payload={"cmd": "notepad", "detach": True}), click))
+        grounding.elements["File"] = UIElement("File", "MenuItem", (0, 0, 40, 20))
+        outcome = asyncio.run(agent.run("open notepad and click the file menu"))
+        assert outcome.success
+        kinds = [(e["type"], e.get("id"), e.get("status")) for e in feedback.events]
+        assert kinds == [
+            ("transcript", None, None),
+            ("plan", None, None),
+            ("step", 1, "running"),
+            ("step", 1, "ok"),
+            ("step", 2, "running"),
+            ("step", 2, "ok"),
+            ("timing", None, None),
+        ]
+        assert feedback.events[0]["text"] == "open notepad and click the file menu"
+        assert feedback.events[1]["steps"] == [
+            {"id": 1, "action": "run_command", "verb": "Run", "target": "notepad"},
+            {"id": 2, "action": "click_element", "verb": "Click", "target": "File"},
+        ]
+        assert feedback.events[-1] == {
+            "type": "timing",
+            "asr_ms": outcome.t_asr_ms,
+            "llm_ms": outcome.t_llm_planning_ms,
+            "exec_ms": outcome.t_total_execution_ms,
+            "success": True,
+        }
+
+    def test_progress_events_report_retries_and_failure(
+        self, make_agent, feedback: RecordingFeedback
+    ) -> None:
+        agent, _ = make_agent(
+            plan(mk(1, expected_postcondition="stdout_contains:never-printed")), max_step_retries=1
+        )
+        outcome = asyncio.run(agent.run("x"))
+        assert not outcome.success
+        steps = [(e["status"], e["attempt"]) for e in feedback.events if e["type"] == "step"]
+        assert steps == [("running", 0), ("retry", 0), ("running", 1), ("failed", 1)]
+        assert feedback.events[-1]["type"] == "timing" and feedback.events[-1]["success"] is False
+
+    def test_a_failing_event_hook_does_not_break_the_run(
+        self, make_agent, feedback: RecordingFeedback
+    ) -> None:
+        async def broken(event: object) -> None:
+            raise RuntimeError("HUD crashed")
+
+        feedback.on_event = broken  # type: ignore[method-assign]
+        agent, _ = make_agent(plan(mk(1)))
+        assert asyncio.run(agent.run("x")).success
+
     def test_transition_table_is_closed(self) -> None:
         for state, targets in TRANSITIONS.items():
             assert targets, state
