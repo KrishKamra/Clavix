@@ -33,7 +33,8 @@ async def _run(command: str | None, config_path: str | None, show_states: bool) 
             return 0
         print(
             f"[clavix] heard {outcome.transcript!r}: asr {outcome.t_asr_ms:.0f} ms, "
-            f"llm {outcome.t_llm_planning_ms:.0f} ms, exec {outcome.t_total_execution_ms:.0f} ms"
+            f"llm {outcome.t_llm_planning_ms:.0f} ms, exec {outcome.t_total_execution_ms:.0f} ms",
+            flush=True,  # show it immediately even when stdout is piped (e.g. to Tee-Object)
         )
 
 
