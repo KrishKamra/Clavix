@@ -49,5 +49,5 @@ over the 10 files (n = 50). WER is computed on casefolded words with punctuation
 - `without_timestamps=True` and `cpu_threads` tuning gave no consistent gain on synthetic
   audio, so the spec's `transcribe` call is used unchanged.
 - `WavFileSource` decodes 16 kHz 16-bit PCM with the stdlib. `faster_whisper.decode_audio`
-  1.2.1 fails with PyAV 19 (the version locked for Python 3.12) and is only the fallback for
-  other formats.
+  1.2.1 fails with PyAV 19, so the acoustic extra pins `av<19`; the stdlib path needs no PyAV, and
+  `decode_audio` is only the fallback for other formats.
