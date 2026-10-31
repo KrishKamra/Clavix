@@ -9,19 +9,37 @@ Planner modes:
       reference plan. Isolates execution + verification from planning quality.
     * ``llm`` — the configured LLM (Ollama / Gemini) plans from the raw command.
 
+Options:
+    * ``--repeat N`` runs each task N times, each in a fresh workspace
+      (``runs/<run_id>/workspace/<task_id>-<rep>``), for meaningful p95s.
+    * ``--cleanup`` kills processes a task started (only PIDs that appeared during
+      the task, for the image names in its ``cleanup_processes``).
+    * ``--audio`` feeds each task's recorded command (``audio_fixture``) through
+      the configured acoustic module instead of passing the text.
+
+Each task runs with its workspace as the current directory, so relative paths an
+LLM plan writes ("note.txt in the workspace") land where ground truth looks.
+
 Usage::
 
     uv run clavix-bench --planner reference --tiers 1 2
+    uv run clavix-bench --planner llm --repeat 5 --cleanup --audio
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import csv
+import io
 import json
 import logging
+import os
+import signal
+import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -32,10 +50,12 @@ from pydantic import BaseModel, Field
 from clavix.config import ClavixConfig, load_config, resolve_repo_path
 from clavix.core.planner import MockLLMClient, Planner, build_planner
 from clavix.core.verifier import StateVerifier
+from clavix.evaluation.metrics import word_error_rate
 from clavix.execution.native_ops import NativeOps
+from clavix.modules.acoustic import AcousticInterface
 from clavix.modules.feedback import FeedbackInterface
 from clavix.modules.grounding import GroundingInterface
-from clavix.runtime import build_runtime, harden_stdio
+from clavix.runtime import ComponentError, build_runtime, harden_stdio
 from clavix.schemas.actions import ActionStep
 from clavix.schemas.telemetry import BenchmarkRecord, TaskOutcome
 
@@ -71,6 +91,10 @@ class BenchmarkTask(BaseModel):
     ground_truth: list[GroundTruth] = Field(default_factory=list)
     platforms: Optional[list[str]] = None
     """``sys.platform`` values the task can run on; ``None`` means all."""
+    cleanup_processes: Optional[list[str]] = None
+    """Image names (e.g. ``"notepad.exe"``) whose new processes ``--cleanup`` kills after the task."""
+    audio_fixture: Optional[str] = None
+    """Recorded command, relative to the repository root, used by ``--audio``."""
 
     def runs_on(self, platform: str) -> bool:
         """Whether this task applies to ``platform``."""
@@ -151,6 +175,69 @@ def check_ground_truth(gt: GroundTruth, outcome: TaskOutcome) -> tuple[bool, str
     raise AssertionError(f"unhandled ground truth {gt.type}")  # pragma: no cover
 
 
+def compare_plans(plan: Sequence[ActionStep], reference: Sequence[ActionStep]) -> tuple[bool, bool]:
+    """Compare an LLM plan with the reference plan.
+
+    Returns:
+        ``(action_match, exact_match)``. ``action_match``: the ``(action_name,
+        action_type)`` sequences are equal. ``exact_match``: also every payload is
+        equal. Payloads are compared in their ``ActionStep``-normalised form (so
+        ``https://github.com`` equals ``https://github.com/``);
+        ``expected_postcondition`` is ignored.
+    """
+    actions = [(s.action_name, s.action_type) for s in plan]
+    action_match = actions == [(s.action_name, s.action_type) for s in reference]
+    exact = action_match and all(
+        ActionStep.model_validate(a.model_dump()).payload == ActionStep.model_validate(b.model_dump()).payload
+        for a, b in zip(plan, reference, strict=True)
+    )
+    return action_match, exact
+
+
+def list_pids(image_names: Iterable[str]) -> set[int]:
+    """PIDs of running processes whose image name matches one of ``image_names`` (case-insensitive)."""
+    wanted = {name.casefold() for name in image_names}
+    if not wanted:
+        return set()
+    if sys.platform == "win32":
+        out = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, check=False
+        ).stdout
+        rows = ((row[0], row[1]) for row in csv.reader(io.StringIO(out)) if len(row) > 1)
+    else:
+        out = subprocess.run(
+            ["ps", "-A", "-o", "pid=,comm="], capture_output=True, text=True, check=False
+        ).stdout
+        rows = ((parts[1], parts[0]) for line in out.splitlines() if len(parts := line.split(None, 1)) == 2)
+    pids = set()
+    for name, pid in rows:
+        if Path(name.strip()).name.casefold() in wanted and pid.strip().isdigit():
+            pids.add(int(pid))
+    return pids
+
+
+def kill_pids(pids: Iterable[int]) -> None:
+    """Forcefully end ``pids``; processes that already exited are ignored."""
+    for pid in pids:
+        if sys.platform == "win32":
+            subprocess.run(  # noqa: S603 - fixed argv; pid is an int
+                ["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False
+            )
+        else:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+
+
+@contextlib.contextmanager
+def _working_directory(path: Path) -> Iterator[None]:
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 class TaskReport(BaseModel):
     """A task's benchmark record plus the detail needed to debug it."""
 
@@ -168,6 +255,7 @@ class BenchmarkHarness:
         config: ClavixConfig,
         *,
         planner_mode: PlannerMode = "reference",
+        audio: bool = False,
         output_dir: str | Path | None = None,
         native: NativeOps | None = None,
         grounding: GroundingInterface | None = None,
@@ -177,6 +265,7 @@ class BenchmarkHarness:
         self.suite = suite
         self.config = config
         self.planner_mode = planner_mode
+        self.audio = audio
         self.output_dir = Path(output_dir) if output_dir else resolve_repo_path(config.benchmark.output_dir)
         self.runtime = build_runtime(
             config, grounding=grounding, feedback=feedback, native=native, verifier=verifier
@@ -190,11 +279,34 @@ class BenchmarkHarness:
             return Planner(MockLLMClient(responder=lambda _messages: plan), max_retries=0)
         return build_planner(self.config.planner)
 
-    async def run_task(self, task: BenchmarkTask) -> TaskReport:
+    def _acoustic_for(self, task: BenchmarkTask) -> AcousticInterface:
+        """Build the configured acoustic class over the task's fixture and warm it up."""
+        if task.audio_fixture is None:
+            raise ComponentError(f"{task.task_id} has no audio_fixture")
+        spec = self.config.modules.acoustic
+        module_name, _, class_name = spec.class_path.partition(":")
+        cls = getattr(__import__(module_name, fromlist=[class_name]), class_name)
+        if not hasattr(cls, "from_wav_files"):
+            raise ComponentError(f"{spec.class_path} has no from_wav_files(); --audio needs it")
+        acoustic: AcousticInterface = cls.from_wav_files(
+            [str(resolve_repo_path(task.audio_fixture))], **spec.options
+        )
+        warmup = getattr(acoustic, "warmup", None)
+        if callable(warmup):
+            warmup()  # keep the model load out of t_asr_ms
+        return acoustic
+
+    async def run_task(self, task: BenchmarkTask, repetition: int = 0) -> TaskReport:
         """Run one (already resolved) task and check its ground truth."""
-        agent = self.runtime.make_agent(self._planner_for(task))
+        acoustic = self._acoustic_for(task) if self.audio else None
+        agent = self.runtime.make_agent(self._planner_for(task), acoustic=acoustic)
         self.runtime.dispatcher.reset_abort()
-        outcome = await agent.run(task.command)
+        try:
+            outcome = await agent.run(None if self.audio else task.command)
+        finally:
+            close = getattr(acoustic, "close", None)
+            if callable(close):
+                close()
 
         results = [(gt, *check_ground_truth(gt, outcome)) for gt in task.ground_truth]
         checks: list[dict[str, Any]] = [
@@ -205,22 +317,32 @@ class BenchmarkHarness:
         if outcome.success and not gt_ok:
             error = "ground truth failed: " + "; ".join(detail for _, ok, detail in results if not ok)
 
+        plan_match: tuple[bool | None, bool | None] = (None, None)
+        if self.planner_mode == "llm" and outcome.plan is not None:
+            plan_match = compare_plans(outcome.plan.steps, task.reference_steps())
         record = outcome.to_benchmark_record(
             task.task_id,
             task.tier,
             task_success=outcome.success and gt_ok,
             planner=self._planner_label(),
             error_message=error,
+            repetition=repetition,
+            transcript_wer=word_error_rate(task.command, outcome.transcript) if self.audio else None,
+            plan_action_match=plan_match[0],
+            plan_exact_match=plan_match[1],
         )
         return TaskReport(record=record, ground_truth=checks, outcome=outcome)
 
-    async def run(self, tiers: Sequence[int] | None = None) -> list[TaskReport]:
-        """Run all applicable tasks in suite order.
+    async def run(
+        self, tiers: Sequence[int] | None = None, *, repeat: int = 1, cleanup: bool = False
+    ) -> list[TaskReport]:
+        """Run all applicable tasks in suite order, each ``repeat`` times in a row.
 
         Args:
             tiers: Restrict to these tiers; ``None`` runs all.
+            repeat: Runs per task; each gets its own workspace.
+            cleanup: Kill processes a task started (see ``cleanup_processes``).
         """
-        self.workspace.mkdir(parents=True, exist_ok=True)
         reports: list[TaskReport] = []
         for task in self.suite.tasks:
             if tiers is not None and task.tier not in tiers:
@@ -228,10 +350,23 @@ class BenchmarkHarness:
             if not task.runs_on(sys.platform):
                 logger.info("skipping %s: not supported on %s", task.task_id, sys.platform)
                 continue
-            report = await self.run_task(task.resolve(self.workspace))
-            status = "PASS" if report.record.task_success else "FAIL"
-            logger.info("%s %s (%s)", task.task_id, status, report.record.error_message or "ok")
-            reports.append(report)
+            if self.audio and task.audio_fixture is None:
+                logger.warning("skipping %s: no audio_fixture for --audio", task.task_id)
+                continue
+            for rep in range(repeat):
+                workspace = self.workspace / f"{task.task_id}-{rep}"
+                workspace.mkdir(parents=True, exist_ok=True)
+                names = (task.cleanup_processes or []) if cleanup else []
+                before = list_pids(names)
+                try:
+                    with _working_directory(workspace):
+                        report = await self.run_task(task.resolve(workspace), repetition=rep)
+                finally:
+                    if names:
+                        kill_pids(list_pids(names) - before)
+                status = "PASS" if report.record.task_success else "FAIL"
+                logger.info("%s#%d %s (%s)", task.task_id, rep, status, report.record.error_message or "ok")
+                reports.append(report)
         return reports
 
     def write_results(self, reports: Sequence[TaskReport]) -> tuple[Path, Path]:
@@ -246,6 +381,7 @@ class BenchmarkHarness:
             "run_id": self.run_id,
             "suite": {"name": self.suite.name, "version": self.suite.version},
             "planner": self._planner_label(),
+            "audio": self.audio,
             "platform": sys.platform,
             "config": self.config.model_dump(),
             "records": records,
@@ -268,6 +404,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--planner", choices=["reference", "llm"], default="reference")
     parser.add_argument("--tiers", type=int, nargs="+", choices=[1, 2, 3])
     parser.add_argument("--output", help="output directory (default: from config)")
+    parser.add_argument("--repeat", type=int, default=1, metavar="N", help="runs per task (default: 1)")
+    parser.add_argument("--cleanup", action="store_true", help="kill processes each task started")
+    parser.add_argument("--audio", action="store_true", help="speak each command from its recorded fixture")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     harden_stdio()
@@ -277,15 +416,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     config = load_config(args.config)
     suite = BenchmarkSuite.load(resolve_repo_path(args.suite or config.benchmark.suite_path))
-    harness = BenchmarkHarness(suite, config, planner_mode=args.planner, output_dir=args.output)
-    reports = asyncio.run(harness.run(args.tiers))
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1")
+    harness = BenchmarkHarness(
+        suite, config, planner_mode=args.planner, audio=args.audio, output_dir=args.output
+    )
+    reports = asyncio.run(harness.run(args.tiers, repeat=args.repeat, cleanup=args.cleanup))
     csv_path, json_path = harness.write_results(reports)
 
-    from clavix.evaluation.metrics import success_rate_by_tier
+    from clavix.evaluation.metrics import plan_accuracy_by_tier, success_rate_by_tier, transcription_summary
 
     df = pd.DataFrame([r.record.model_dump() for r in reports])
     if not df.empty:
         print(success_rate_by_tier(df).to_string(index=False))
+        if df["plan_action_match"].notna().any():
+            print("\nPlan accuracy\n" + plan_accuracy_by_tier(df).to_string(index=False))
+        if df["transcript_wer"].notna().any():
+            print("\nTranscription\n" + transcription_summary(df).to_string(index=False))
     print(f"\nresults: {csv_path}\n         {json_path}")
     return 0
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from clavix.execution.native_ops import NativeOps
+from clavix.modules.acoustic import AcousticInterface, Transcript
 from clavix.modules.feedback import AgentEvent, FeedbackInterface
 from clavix.modules.grounding import GroundingInterface, UIElement
 from clavix.schemas.actions import ActionType, ExecutionResult
@@ -90,3 +91,37 @@ class FakeGrounding(GroundingInterface):
         if self.window_titles is None:
             raise NotImplementedError
         return list(self.window_titles)
+
+
+class FakeWavAcoustic(AcousticInterface):
+    """Stands in for an ASR class with ``from_wav_files`` (the ``--audio`` benchmark).
+
+    Each fixture "transcribes" to ``text`` (default: the file's stem) in ``t_asr_ms``.
+    ``warmups`` and ``closed`` record lifecycle calls for assertions.
+    """
+
+    warmups: int = 0
+
+    def __init__(
+        self, paths: list[str] | None = None, text: str | None = None, t_asr_ms: float = 12.5
+    ) -> None:
+        self.paths = list(paths or [])
+        self.text = text
+        self.t_asr_ms = t_asr_ms
+        self.closed = False
+
+    @classmethod
+    def from_wav_files(cls, paths: list[str], **options: Any) -> FakeWavAcoustic:
+        return cls(paths, **options)
+
+    def warmup(self) -> None:
+        FakeWavAcoustic.warmups += 1
+
+    async def listen(self) -> Transcript:
+        if not self.paths:
+            raise EOFError("EOF: no WAV files left")
+        path = Path(self.paths.pop(0))
+        return Transcript(text=self.text if self.text is not None else path.stem, t_asr_ms=self.t_asr_ms)
+
+    def close(self) -> None:
+        self.closed = True

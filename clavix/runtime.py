@@ -92,14 +92,20 @@ class Runtime:
     dispatcher: Dispatcher
     verifier: StateVerifier
 
-    def make_agent(self, planner: Planner) -> ClavixAgent:
-        """Create an agent that uses these components and ``planner``."""
+    def make_agent(self, planner: Planner, acoustic: AcousticInterface | None = None) -> ClavixAgent:
+        """Create an agent that uses these components and ``planner``.
+
+        Args:
+            planner: The planner for this agent.
+            acoustic: Overrides the configured acoustic module (the audio benchmark
+                builds one per task from a WAV fixture).
+        """
         return ClavixAgent.from_config(
             self.config,
             planner=planner,
             dispatcher=self.dispatcher,
             feedback=self.feedback,
-            acoustic=self.acoustic,
+            acoustic=acoustic or self.acoustic,
             verifier=self.verifier,
         )
 

@@ -6,6 +6,8 @@ list of :class:`BenchmarkRecord`). Outputs are pandas DataFrames:
 * :func:`success_rate_by_tier` — Task Success Rate per tier.
 * :func:`latency_summary` — mean / median / p95 per latency phase and tier.
 * :func:`latency_waterfall` — mean ASR -> LLM -> OS execution breakdown per tier.
+* :func:`plan_accuracy_by_tier` — LLM plans matching the reference plan (``--planner llm``).
+* :func:`word_error_rate` / :func:`transcription_summary` — ASR accuracy (``--audio``).
 
 Usage::
 
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -24,6 +27,24 @@ import pandas as pd
 from clavix.schemas.telemetry import BenchmarkRecord
 
 LATENCY_PHASES = ("t_asr_ms", "t_llm_planning_ms", "t_total_execution_ms")
+_PUNCTUATION = re.compile(r"[^\w\s]")
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Word-level Levenshtein distance divided by the reference length.
+
+    Both sides are case-folded and stripped of punctuation first, so
+    ``"Open GitHub."`` matches ``"open github"`` exactly.
+    """
+    ref = _PUNCTUATION.sub("", reference.casefold()).split()
+    hyp = _PUNCTUATION.sub("", hypothesis.casefold()).split()
+    previous = list(range(len(hyp) + 1))
+    for i, ref_word in enumerate(ref, start=1):
+        current = [i]
+        for j, hyp_word in enumerate(hyp, start=1):
+            current.append(min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + (ref_word != hyp_word)))
+        previous = current
+    return previous[-1] / max(1, len(ref))
 
 
 def records_to_frame(records: Iterable[BenchmarkRecord]) -> pd.DataFrame:
@@ -87,8 +108,53 @@ def latency_waterfall(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("tier", sort=True)[list(LATENCY_PHASES)].mean().reset_index()
 
 
+def _has_values(df: pd.DataFrame, column: str) -> bool:
+    return column in df.columns and bool(df[column].notna().any())
+
+
+def plan_accuracy_by_tier(df: pd.DataFrame) -> pd.DataFrame:
+    """Share of LLM plans matching the reference, per tier plus an ``all`` row.
+
+    Rows without a comparison (``None``: reference mode, or no plan produced) are ignored.
+    Columns: ``tier, n_plans, plan_action_match, plan_exact_match``.
+    """
+    rated = df[df["plan_action_match"].notna()] if "plan_action_match" in df.columns else df.iloc[0:0]
+
+    def _agg(group: pd.DataFrame, tier: object) -> dict[str, object]:
+        n = len(group)
+        return {
+            "tier": tier,
+            "n_plans": n,
+            "plan_action_match": float(group["plan_action_match"].astype(bool).mean()) if n else float("nan"),
+            "plan_exact_match": float(group["plan_exact_match"].astype(bool).mean()) if n else float("nan"),
+        }
+
+    rows = [_agg(g, int(str(tier))) for tier, g in rated.groupby("tier", sort=True)]
+    rows.append(_agg(rated, "all"))
+    return pd.DataFrame(rows)
+
+
+def transcription_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Mean WER, exact-transcript rate and median ASR latency per tier (``--audio`` runs only)."""
+    rated = df[df["transcript_wer"].notna()] if "transcript_wer" in df.columns else df.iloc[0:0]
+
+    def _agg(group: pd.DataFrame, tier: object) -> dict[str, object]:
+        n = len(group)
+        return {
+            "tier": tier,
+            "n": n,
+            "mean_wer": float(group["transcript_wer"].mean()) if n else float("nan"),
+            "exact_rate": float((group["transcript_wer"] == 0).mean()) if n else float("nan"),
+            "median_t_asr_ms": float(group["t_asr_ms"].median()) if n else float("nan"),
+        }
+
+    rows = [_agg(g, int(str(tier))) for tier, g in rated.groupby("tier", sort=True)]
+    rows.append(_agg(rated, "all"))
+    return pd.DataFrame(rows)
+
+
 def write_summary(df: pd.DataFrame, out_dir: str | Path, stem: str = "summary") -> list[Path]:
-    """Write the three summary tables as CSVs into ``out_dir``."""
+    """Write the summary tables as CSVs into ``out_dir`` (plan and ASR tables when present)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tables = {
@@ -96,6 +162,10 @@ def write_summary(df: pd.DataFrame, out_dir: str | Path, stem: str = "summary") 
         "latency_summary": latency_summary(df),
         "latency_waterfall": latency_waterfall(df),
     }
+    if _has_values(df, "plan_action_match"):
+        tables["plan_accuracy"] = plan_accuracy_by_tier(df)
+    if _has_values(df, "transcript_wer"):
+        tables["transcription"] = transcription_summary(df)
     paths = []
     for name, table in tables.items():
         path = out / f"{stem}_{name}.csv"
@@ -118,6 +188,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Task success rate\n" + success_rate_by_tier(df).to_string(index=False))
     print("\nLatency waterfall (mean ms)\n" + latency_waterfall(df).to_string(index=False))
     print("\nLatency summary (ms)\n" + latency_summary(df).to_string(index=False))
+    if _has_values(df, "plan_action_match"):
+        print("\nPlan accuracy (LLM vs reference)\n" + plan_accuracy_by_tier(df).to_string(index=False))
+    if _has_values(df, "transcript_wer"):
+        print("\nTranscription (ASR)\n" + transcription_summary(df).to_string(index=False))
+        print(f"\nMean WER: {df['transcript_wer'].mean():.3f}")
     if args.out:
         for path in write_summary(df, args.out, Path(args.results).stem):
             print(f"wrote {path}")
