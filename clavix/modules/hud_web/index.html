@@ -1,0 +1,336 @@
+<!doctype html>
+<!--
+  Clavix HUD: canonical reference implementation of docs/design/HUD_DESIGN.md.
+  P4 copies this into clavix/modules/hud_web/ and keeps tokens and behaviour in sync with the doc.
+  Open index.html?demo in a browser to watch a scripted task (CSS blur stands in for Acrylic).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Clavix HUD</title>
+<style>
+:root {
+  /* Stage hues: dark-surface steps of the paper palette (validated: dark band, all-pairs CVD) */
+  --hear:  #4A90E2;   /* ACOUSTIC_INGESTION, ASR latency */
+  --think: #C4831C;   /* PLANNING, LLM latency */
+  --act:   #1FA884;   /* DISPATCHING, execution latency */
+  --check: #A784DB;   /* VERIFYING: core only, never beside --hear */
+  --ok:    #3FBF78;   /* status: always with a check mark */
+  --fail:  #F0625A;   /* status: always with a cross / text */
+  --idle:  #9AA3B2;
+
+  --ink-1: rgba(244, 246, 250, 0.96);   /* titles, transcript */
+  --ink-2: rgba(226, 231, 240, 0.82);   /* secondary: 6.9:1 on the lightest measured glass */
+  --ink-3: rgba(214, 220, 232, 0.68);   /* hints, units: 4.8:1, the WCAG AA floor is 4.5 */
+  --glass: rgba(16, 18, 24, 0.50);      /* tint over DWM Acrylic */
+
+  --stage: var(--idle);
+  --radius: 8px;                         /* = DWM DWMWCP_ROUND, so CSS and window corners agree */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { background: transparent; overflow: hidden; }
+body {
+  font: 400 12px/1.4 var(--font-ui); color: var(--ink-1);
+  -webkit-font-smoothing: antialiased; user-select: none; cursor: default;
+}
+body[data-state="ACOUSTIC_INGESTION"] { --stage: var(--hear); }
+body[data-state="PLANNING"]           { --stage: var(--think); }
+body[data-state="DISPATCHING"]        { --stage: var(--act); }
+body[data-state="VERIFYING"]          { --stage: var(--check); }
+body[data-state="FEEDBACK"]           { --stage: var(--act); }
+body[data-state="COMPLETED"]          { --stage: var(--ok); }
+body[data-state="FAILED"]             { --stage: var(--fail); }
+
+/* ---- Surface -------------------------------------------------------------------------- */
+.card {
+  position: relative; overflow: hidden; isolation: isolate; width: 420px;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(90% 120% at 0% 0%, color-mix(in oklab, var(--stage) 30%, transparent) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%),
+    var(--glass);
+  transition: background 400ms var(--ease);
+}
+.card::before {  /* hairline edge, lit from above */
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; z-index: 2;
+  background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.05) 45%, rgba(255,255,255,0.08));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+}
+.card::after {  /* 5% grain: removes gradient banding */
+  content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0.05; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---- Head: aperture + titles + clock -------------------------------------------------- */
+.head { display: flex; align-items: center; gap: 12px; padding: 12px 14px 12px 12px; }
+.core { position: relative; width: 30px; height: 30px; flex: none; }
+.core i {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from var(--spin, 0deg),
+    color-mix(in oklab, var(--stage) 10%, transparent),
+    var(--stage) 70%, color-mix(in oklab, var(--stage) 40%, white) 92%,
+    color-mix(in oklab, var(--stage) 10%, transparent));
+  -webkit-mask: radial-gradient(circle, transparent 10.5px, #000 11px);
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--stage) 60%, transparent));
+}
+.core b {
+  position: absolute; inset: 9px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, color-mix(in oklab, var(--stage) 30%, white), var(--stage) 70%);
+  box-shadow: 0 0 14px 2px color-mix(in oklab, var(--stage) 55%, transparent);
+  transition: background 400ms var(--ease), box-shadow 400ms var(--ease);
+}
+body[data-state="IDLE"] .core i { background: rgba(255,255,255,0.18); filter: none; }
+body[data-state="IDLE"] .core b { background: rgba(255,255,255,0.28); box-shadow: none; }
+@property --spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+body[data-state="ACOUSTIC_INGESTION"] .core { animation: breathe 2.4s var(--ease) infinite; }
+body[data-state="PLANNING"] .core i,
+body[data-state="DISPATCHING"] .core i,
+body[data-state="VERIFYING"] .core i { animation: spin 1.6s linear infinite; }
+@keyframes spin { to { --spin: 360deg; } }
+@keyframes breathe { 50% { transform: scale(1.08); } }
+
+.titles { flex: 1; min-width: 0; }
+.state { font: 600 14px/1.15 var(--font-display); letter-spacing: 0.1px; }
+.sub { color: var(--ink-2); margin-top: 2px; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1; overflow: hidden; }
+body[data-state="FAILED"] .sub { -webkit-line-clamp: 2; }
+.clock { font: 500 12px var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* ---- Body (expanded only) ------------------------------------------------------------- */
+.body { padding: 0 14px 14px; display: grid; gap: 12px; }
+body.compact .body { display: none; }
+.body > [hidden] { display: none; }
+
+.quote { font: 400 15px/1.35 var(--font-ui); color: var(--ink-1); }
+.quote::before { content: "\201C"; color: var(--ink-3); margin-right: 1px; }
+.quote::after  { content: "\201D"; color: var(--ink-3); margin-left: 1px; }
+
+/* Latency ribbon: the paper's waterfall, live. 2px gaps + legend = non-colour encoding. */
+.ribbon { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.06); }
+.ribbon span { flex: var(--w, 0) 1 0; min-width: 0; transition: flex-grow 500ms var(--ease); }
+.ribbon .hear  { background: var(--hear); }
+.ribbon .think { background: var(--think); }
+.ribbon .act   { background: var(--act); }
+.ribbon span.live { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.55; } }
+.legend { display: flex; gap: 14px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 8px; }
+.legend em { font-style: normal; color: var(--ink-2); }
+.legend i { display: inline-block; width: 6px; height: 6px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+
+.steps { list-style: none; padding: 0; display: grid; gap: 6px; }
+.steps li { display: flex; align-items: center; gap: 10px; color: var(--ink-2); min-width: 0; }
+.steps li span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.steps li code { font: 500 11.5px var(--font-mono); color: var(--ink-1); }
+.steps .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 1.5px solid var(--ink-3); position: relative; }
+.steps li[data-s="running"] .dot,
+.steps li[data-s="retry"] .dot { border-color: var(--stage); border-top-color: transparent; animation: rot 0.9s linear infinite; }
+.steps li[data-s="ok"] .dot { border-color: var(--ok); background: var(--ok); }
+.steps li[data-s="ok"] .dot::after { content: ""; position: absolute; left: 3.5px; top: 1.5px; width: 3px; height: 6px;
+  border: solid #0d1a12; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.steps li[data-s="failed"] .dot { border-color: var(--fail); background: var(--fail); }
+.steps li[data-s="failed"] .dot::before, .steps li[data-s="failed"] .dot::after {
+  content: ""; position: absolute; left: 5.25px; top: 2.5px; width: 1.5px; height: 6px; background: #2a0d0b; }
+.steps li[data-s="failed"] .dot::before { transform: rotate(45deg); }
+.steps li[data-s="failed"] .dot::after { transform: rotate(-45deg); }
+.steps li[data-s="retry"]::after { content: "retrying"; font-size: 11px; color: var(--ink-3); }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+.actions { display: flex; align-items: center; justify-content: space-between; min-height: 30px; }
+.hint { color: var(--ink-3); font-size: 11px; }
+kbd { font: 500 10.5px var(--font-mono); color: var(--ink-2); padding: 1px 5px; border-radius: 4px;
+  background: rgba(255,255,255,0.07); box-shadow: inset 0 -1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.08); }
+button.stop {
+  font: 600 12px var(--font-ui); color: #fff; border: 0; cursor: pointer; padding: 7px 14px; border-radius: 6px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--fail) 92%, white), color-mix(in oklab, var(--fail) 80%, black));
+  box-shadow: 0 6px 16px -6px color-mix(in oklab, var(--fail) 80%, transparent), inset 0 1px 0 rgba(255,255,255,0.3);
+  transition: transform 120ms var(--ease), filter 120ms;
+}
+button.stop:hover { filter: brightness(1.08); }
+button.stop:active { transform: translateY(1px) scale(0.98); }
+button.stop:focus-visible { outline: 2px solid var(--ink-1); outline-offset: 2px; }
+body.terminal .actions { display: none; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ---- Browser demo only: CSS blur stands in for DWM Acrylic ---------------------------- */
+body.demo { padding: 48px; min-height: 100vh; overflow: auto;
+  background: linear-gradient(120deg, #ff9a3c 0%, #ff4f81 30%, #4b6cff 62%, #22d3a6 100%); }
+body.demo .card { --glass: rgba(16, 18, 24, 0.62); margin: 0 auto;
+  backdrop-filter: blur(30px) saturate(1.4); box-shadow: 0 18px 40px -12px rgba(0,0,0,0.55); }
+</style>
+</head>
+<body class="compact terminal" data-state="IDLE">
+  <main class="card" aria-label="Clavix status">
+    <div class="head">
+      <div class="core" aria-hidden="true"><i></i><b></b></div>
+      <div class="titles">
+        <div class="state" id="state">Ready</div>
+        <div class="sub" id="sub">Say a command</div>
+      </div>
+      <div class="clock" id="clock" aria-hidden="true"></div>
+    </div>
+    <section class="body">
+      <p class="quote" id="quote" hidden></p>
+      <div id="latency" hidden>
+        <div class="ribbon" aria-hidden="true"><span class="hear"></span><span class="think"></span><span class="act"></span></div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <ul class="steps" id="steps" hidden></ul>
+      <div class="actions">
+        <span class="hint">Press <kbd>Esc</kbd> <kbd>Esc</kbd> to stop</span>
+        <button class="stop" id="stop" type="button" aria-label="Stop the running Clavix task">Stop</button>
+      </div>
+    </section>
+  </main>
+<script>
+"use strict";
+const LABELS = {
+  IDLE: ["Ready", "Say a command"],
+  ACOUSTIC_INGESTION: ["Listening", "Go ahead, I'm listening"],
+  PLANNING: ["Thinking", "Planning the steps"],
+  DISPATCHING: ["Acting", "Working on it"],
+  VERIFYING: ["Checking", "Confirming it worked"],
+  FEEDBACK: ["Wrapping up", null],
+  COMPLETED: ["Done", null],
+  FAILED: ["Couldn't finish", null],
+};
+const TERMINAL = new Set(["IDLE", "COMPLETED", "FAILED"]);
+const COLLAPSE_AFTER_MS = { COMPLETED: 4000, FAILED: 8000 };
+const LIVE_SEGMENT = { ACOUSTIC_INGESTION: 0, PLANNING: 1, DISPATCHING: 2, VERIFYING: 2 };
+
+const $ = (id) => document.getElementById(id);
+const body = document.body;
+const segments = document.querySelectorAll(".ribbon span");
+let timing = { asr_ms: 0, llm_ms: 0, exec_ms: 0 };
+let startedAt = 0, collapseTimer = 0;
+
+const fmt = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : Math.round(ms) + " ms");
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+function setSub(text) {
+  // The title already says "Done"; don't repeat it in the summary line.
+  const title = $("state").textContent.toLowerCase();
+  let t = String(text).trim();
+  if (t.toLowerCase().startsWith(title + ".")) t = t.slice(title.length + 1).trim();
+  $("sub").textContent = t.length > 140 ? t.slice(0, 139) + "…" : t;
+}
+
+function renderLatency() {
+  const values = [timing.asr_ms, timing.llm_ms, timing.exec_ms];
+  const total = values.reduce((a, b) => a + b, 0);
+  $("latency").hidden = total === 0;
+  const live = LIVE_SEGMENT[body.dataset.state] ?? -1;
+  values.forEach((v, i) => {
+    segments[i].style.setProperty("--w", total ? v / total : 0);
+    segments[i].classList.toggle("live", i === live);
+  });
+  $("legend").innerHTML = [["Hear", values[0], "--hear"], ["Think", values[1], "--think"], ["Act", values[2], "--act"]]
+    .map(([k, v, c]) => `<span><i style="background:var(${c})"></i>${k} <em>${v ? fmt(v) : "–"}</em></span>`)
+    .join("");
+}
+
+function reset() {
+  timing = { asr_ms: 0, llm_ms: 0, exec_ms: 0 };
+  $("quote").hidden = true; $("quote").textContent = "";
+  $("steps").hidden = true; $("steps").innerHTML = "";
+  startedAt = 0;
+  renderLatency();
+}
+
+const hud = {
+  /** Apply one protocol message (see HUD_DESIGN.md, "Protocol"). Unknown types are ignored. */
+  apply(ev) {
+    switch (ev.type) {
+      case "state": {
+        const s = ev.state, [title, sub] = LABELS[s] || [s, null];
+        clearTimeout(collapseTimer);
+        if (s === "ACOUSTIC_INGESTION") reset();
+        body.dataset.state = s;
+        body.classList.toggle("terminal", TERMINAL.has(s));
+        $("state").textContent = title;
+        setSub(sub !== null ? sub : $("sub").textContent);
+        $("stop").disabled = TERMINAL.has(s);
+        if (s === "ACOUSTIC_INGESTION" || s === "IDLE") body.classList.add("compact");
+        else body.classList.remove("compact");
+        if (s === "PLANNING") { body.classList.remove("compact"); startedAt = performance.now(); }
+        if (COLLAPSE_AFTER_MS[s]) collapseTimer = setTimeout(() => hud.apply({ type: "state", state: "IDLE" }), COLLAPSE_AFTER_MS[s]);
+        renderLatency();
+        break;
+      }
+      case "message": setSub(ev.text); break;
+      case "transcript":
+        $("quote").textContent = ev.text; $("quote").hidden = !ev.text;
+        timing.asr_ms = ev.asr_ms || 0; renderLatency();
+        break;
+      case "plan":
+        timing.llm_ms = ev.llm_ms || 0; renderLatency();
+        $("steps").innerHTML = ev.steps.map((st) =>
+          `<li data-id="${Number(st.id)}" data-s="pending"><span class="dot"></span>` +
+          `<span>${escapeHtml(st.verb)} <code>${escapeHtml(st.target)}</code></span></li>`).join("");
+        $("steps").hidden = ev.steps.length === 0;
+        break;
+      case "step": {
+        const li = $("steps").querySelector(`[data-id="${Number(ev.id)}"]`);
+        if (li) li.dataset.s = ev.status;
+        break;
+      }
+      case "timing":
+        timing = { asr_ms: ev.asr_ms || 0, llm_ms: ev.llm_ms || 0, exec_ms: ev.exec_ms || 0 };
+        renderLatency();
+        break;
+    }
+  },
+};
+window.hud = hud;
+$("stop").addEventListener("click", () => window.pywebview?.api?.abort());
+setInterval(() => {
+  const live = startedAt && !TERMINAL.has(body.dataset.state);
+  $("clock").textContent = live ? ((performance.now() - startedAt) / 1000).toFixed(1) + "s" : "";
+}, 100);
+renderLatency();
+
+// Native sizing uses physical pixels; window.resize() double-scales at 150% DPI.
+// The Python host calls hudResize once styling has completed, because the first
+// observer notification can arrive before the native handle is available.
+window.hudResize = () => {
+  const card = document.querySelector(".card").getBoundingClientRect();
+  window.pywebview?.api?.resize(card.width, card.height, window.devicePixelRatio);
+};
+new ResizeObserver(window.hudResize).observe(document.querySelector(".card"));
+window.addEventListener("pywebviewready", window.hudResize);
+
+// ---- Browser demo: index.html?demo ------------------------------------------------------
+if (new URLSearchParams(location.search).has("demo")) {
+  body.classList.add("demo");
+  const script = [
+    [800, { type: "state", state: "ACOUSTIC_INGESTION" }],
+    [2200, { type: "transcript", text: "open notepad and click the file menu", asr_ms: 395, confidence: 0.93 }],
+    [0, { type: "state", state: "PLANNING" }],
+    [2600, { type: "plan", llm_ms: 4460, steps: [
+      { id: 1, action: "run_command", verb: "Run", target: "notepad" },
+      { id: 2, action: "click_element", verb: "Click", target: "File" }] }],
+    [0, { type: "state", state: "DISPATCHING" }], [0, { type: "step", id: 1, status: "running", attempt: 0 }],
+    [700, { type: "state", state: "VERIFYING" }], [500, { type: "step", id: 1, status: "ok", attempt: 0 }],
+    [0, { type: "state", state: "DISPATCHING" }], [0, { type: "step", id: 2, status: "running", attempt: 0 }],
+    [900, { type: "state", state: "VERIFYING" }], [500, { type: "step", id: 2, status: "ok", attempt: 0 }],
+    [0, { type: "timing", asr_ms: 395, llm_ms: 4460, exec_ms: 1459, success: true }],
+    [0, { type: "state", state: "FEEDBACK" }], [300, { type: "state", state: "COMPLETED" }],
+    [0, { type: "message", text: "Done. Completed 2 steps." }],
+  ];
+  const play = async () => {
+    for (;;) {
+      hud.apply({ type: "state", state: "IDLE" });
+      for (const [wait, ev] of script) { await new Promise((r) => setTimeout(r, wait)); hud.apply(ev); }
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+  };
+  play();
+}
+</script>
+</body>
+</html>
