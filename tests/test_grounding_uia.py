@@ -402,6 +402,35 @@ class TestScopeThreeOrder:
 
         assert element is not None and element.label == "Firefox - 1 running window pinned"
 
+    def test_a_huge_foreground_window_cannot_starve_the_taskbar(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Seen with a documentation page in a browser: 8,311 elements, 3.6 s to search.
+        page = _FakeControl(
+            "Docs - Browser", "WindowControl", children=[_FakeControl("x", "TextControl")] * 200
+        )
+        page.GetTopLevelControl = lambda: page  # type: ignore[attr-defined]
+
+        class BrowserInFront(_FakeDesktopAuto):
+            def GetForegroundControl(self) -> Any:
+                return page
+
+            def WalkControl(self, root: _FakeControl, includeTop: bool = False, maxDepth: int = 0) -> Any:
+                for item in super().WalkControl(root, includeTop, maxDepth):
+                    if root is page:
+                        time.sleep(0.01)  # 200 elements: 2 s, longer than the whole timeout
+                    yield item
+
+        windows = [self.taskbar("Start"), page]
+        monkeypatch.setattr(grounding_uia, "_top_level_controls", lambda auto: windows)
+        g = UIAGrounding(timeout_sec=1.0)
+        start = time.monotonic()
+
+        element, _, _ = g._search_once("start", BrowserInFront(), deadline=time.monotonic() + 1.0)
+
+        assert element is not None and element.label == "Start"
+        assert time.monotonic() - start < 1.0  # the page got its share (0.4 s), then the taskbar
+
     def test_deadline_keeps_the_partial_match_found_so_far(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class SlowAfterTaskbar(_FakeDesktopAuto):
             def WalkControl(self, root: _FakeControl, includeTop: bool = False, maxDepth: int = 0) -> Any:

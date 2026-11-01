@@ -42,6 +42,13 @@ Notepad behind another window, "File" must find Notepad's "File" menu, not the t
 first partial match, in scope order, is the fallback when no scope has an exact match,
 including when the deadline passes.
 
+Per-window budget
+-----------------
+Each window (the foreground window, and each window in scope 3) may use at most
+``_WINDOW_BUDGET_SHARE`` of ``timeout_sec`` per pass. Otherwise a large web page in front
+(8,311 elements, 3.6 s) used the whole budget and nothing else was ever searched. The
+trade-off: a target deep inside a very large window may not be found.
+
 Platform
 --------
 ``uiautomation`` is Windows-only.  This module imports cleanly on Linux/macOS
@@ -92,6 +99,11 @@ _SLOW_ROOT_CLASSES = frozenset({"Progman", "WorkerW"})
 
 # Extra wait after the deadline for an in-flight UIA call before giving up on it.
 _DEADLINE_SLACK_SEC = 0.5
+
+# Share of timeout_sec one window may use per search pass. A browser showing a documentation
+# page exposed 8,311 elements and took 3.6 s to search: without a cap it starved the taskbar
+# and every other window. A window too large to finish in its share is skipped for that pass.
+_WINDOW_BUDGET_SHARE = 0.4
 
 
 class _DeadlineExceeded(Exception):
@@ -491,6 +503,32 @@ class UIAGrounding(GroundingInterface):
             logger.debug("_try_scope: could not build UIElement from winner", exc_info=True)
             return None
 
+    def _try_window(
+        self,
+        window: Any,
+        target_norm: str,
+        auto: Any,
+        scanned: list[int],
+        best_score: list[float],
+        is_aux: bool,
+        deadline: float,
+    ) -> UIElement | None:
+        """Search one window within its share of the time budget.
+
+        Returns ``None`` if the window's share runs out (the caller moves on to the next
+        scope); re-raises :class:`_DeadlineExceeded` only when the overall deadline passed.
+        """
+        window_deadline = min(deadline, time.monotonic() + self.timeout_sec * _WINDOW_BUDGET_SHARE)
+        try:
+            return self._try_scope(
+                [window], target_norm, auto, scanned, best_score, is_aux=is_aux, deadline=window_deadline
+            )
+        except _DeadlineExceeded:
+            if time.monotonic() >= deadline:
+                raise
+            logger.debug("window %r too large to search within its budget; skipped", window)
+            return None
+
     def _search_once(
         self, target_norm: str, auto: Any, is_aux: bool = False, deadline: float = float("inf")
     ) -> tuple[UIElement | None, int, float]:
@@ -531,19 +569,12 @@ class UIAGrounding(GroundingInterface):
             fg = auto.GetForegroundControl()
             if fg is not None:
                 top = fg.GetTopLevelControl()
-                result = exact(
-                    self._try_scope(
-                        [top] if top is not None else [],
-                        target_norm,
-                        auto,
-                        scanned,
-                        best_score,
-                        is_aux=is_aux,
-                        deadline=deadline,
+                if top is not None and not self._is_hud(top):
+                    result = exact(
+                        self._try_window(top, target_norm, auto, scanned, best_score, is_aux, deadline)
                     )
-                )
-                if result is not None:
-                    return result, scanned[0], best_score[0]
+                    if result is not None:
+                        return result, scanned[0], best_score[0]
         except _DeadlineExceeded:
             raise
         except Exception:
@@ -608,9 +639,7 @@ class UIAGrounding(GroundingInterface):
             # cross-window tie-break; within a window, the tie-break is unchanged.
             for window in others:
                 result = exact(
-                    self._try_scope(
-                        [window], target_norm, auto, scanned, best_score, is_aux=is_aux, deadline=deadline
-                    )
+                    self._try_window(window, target_norm, auto, scanned, best_score, is_aux, deadline)
                 )
                 if result is not None:
                     return result, scanned[0], best_score[0]
