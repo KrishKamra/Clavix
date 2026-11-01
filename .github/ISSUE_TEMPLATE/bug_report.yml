@@ -1,0 +1,35 @@
+name: 🐞 Bug report
+description: Clavix did the wrong thing, or nothing at all.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! For **security** problems, use private reporting instead (see SECURITY.md).
+  - type: textarea
+    id: command
+    attributes:
+      label: What did you say or type?
+      placeholder: open notepad and click the file menu
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Plan and log output
+      description: Run with `-v` and paste the plan and the failing step. It is formatted as code automatically.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Clavix commit, Windows build, planner model, microphone
+      placeholder: main @ 1f9dccf, Windows 11 26300, llama3:8b, WH-CH520
+    validations:
+      required: true
