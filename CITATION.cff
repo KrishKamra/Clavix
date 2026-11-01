@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use Clavix in your research, please cite it as below."
+title: "Clavix: Deterministic, Closed-Loop Voice-to-Action Automation of the Windows Desktop"
+abstract: >-
+  A local voice-to-action agent for Windows 11 that turns one spoken command into a
+  schema-validated plan of typed actions, executes each step through the most deterministic
+  route available (native operations, accessibility-tree grounding, then a coordinate
+  fallback) and verifies it against operating-system state.
+type: software
+version: 0.1.0
+date-released: 2026-11-01
+license: MIT
+repository-code: "https://github.com/KrishKamra/Clavix"
+keywords:
+  - voice assistant
+  - desktop automation
+  - LLM agents
+  - speech recognition
+  - UI Automation
+  - accessibility
+authors:
+  - given-names: Krish
+    family-names: Kamra
+    affiliation: "Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai, India"
+  - given-names: Shreyash
+    family-names: Pathak
+    affiliation: "Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai, India"
+  - given-names: Varun
+    family-names: Agrawal
+    affiliation: "Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai, India"
+  - given-names: Aditya
+    family-names: Angane
+    affiliation: "Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai, India"

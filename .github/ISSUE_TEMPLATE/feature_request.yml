@@ -1,0 +1,21 @@
+name: ✨ Feature request
+description: An action, command or improvement you would like Clavix to support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do by voice?
+      placeholder: I want to say "type hello in notepad"...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How might Clavix do it?
+      description: Which route (deterministic, UI Automation, fallback) and how could the result be verified?
+  - type: dropdown
+    id: module
+    attributes:
+      label: Area
+      options: [Core / planner, Acoustic, Grounding, Feedback / HUD, Benchmark, Docs]

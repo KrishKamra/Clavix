@@ -1,148 +1,228 @@
+<div align="center">
+
+<img src="docs/assets/logo.svg" width="104" alt="Clavix logo">
+
 # Clavix
 
-Deterministic, closed-loop voice-to-action desktop automation. A spoken (or typed) command
-is planned by an LLM into a strictly validated `ExecutionPlan`. Each step runs on the
-highest-priority path that can do it, and its postcondition is checked before the next step
-starts.
+### Say it. Clavix plans it, does it, *and checks it*.
 
-| Priority | Path              | Mechanism                                          |
-|----------|-------------------|----------------------------------------------------|
-| 1        | `DETERMINISTIC`   | Shell commands, URL/protocol handlers, screenshots |
-| 2        | `OS_GROUNDING`    | Accessibility tree (UIA / AT-SPI) element lookup   |
-| 3        | `VISUAL_FALLBACK` | PyAutoGUI coordinate clicks (off by default)       |
+Voice-to-action automation for the Windows desktop: local, closed-loop and verified.
 
-```text
-IDLE -> ACOUSTIC_INGESTION -> PLANNING -> DISPATCHING <-> VERIFYING -> FEEDBACK -> COMPLETED | FAILED
+<br>
+
+<img src="docs/assets/hero.svg" width="100%" alt="The Clavix HUD typing a spoken command, moving through the Hear, Think, Act and Verify stages, and checking off both plan steps">
+
+<br><br>
+
+[![CI](https://github.com/KrishKamra/Clavix/actions/workflows/ci.yml/badge.svg)](https://github.com/KrishKamra/Clavix/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2E7D4F)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#-quick-start)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![mypy: strict](https://img.shields.io/badge/mypy-strict-1F5FA8)](https://mypy-lang.org)
+
+[![Ollama](https://img.shields.io/badge/Ollama-llama3%3A8b-000000?logo=ollama&logoColor=white)](https://ollama.com)
+[![faster-whisper](https://img.shields.io/badge/ASR-faster--whisper-C8740A)](https://github.com/SYSTRAN/faster-whisper)
+[![UI Automation](https://img.shields.io/badge/grounding-UI%20Automation-0E8A6D)](https://learn.microsoft.com/windows/win32/winauto/entry-uiauto-win32)
+[![WebView2](https://img.shields.io/badge/HUD-WebView2-0078D4?logo=microsoftedge&logoColor=white)](https://developer.microsoft.com/microsoft-edge/webview2)
+[![Pydantic v2](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev)
+[![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org)
+
+[**Results**](docs/RESULTS.md) · [**Architecture**](docs/ARCHITECTURE.md) · [**Quick start**](#-quick-start) · [**Contributing**](CONTRIBUTING.md) · [**Cite**](#-citation)
+
+</div>
+
+---
+
+Voice assistants answer questions; they rarely *operate* the apps you actually use. LLM agents can,
+but they act open-loop: when a click misses or a file is never written, they don't notice.
+
+**Clavix closes the loop.** It turns one spoken command into a schema-validated plan, runs each step
+on the most deterministic route available, and **checks every step against the real state of the
+operating system** before moving on. Speech recognition and planning run entirely on your machine.
+
+## ✨ Highlights
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🔒 Local
+Whisper and the LLM run on the device's CPU. With the default planner, no audio, transcript or
+screen content leaves your machine.
+
+</td>
+<td width="33%" valign="top">
+
+### 🎯 Deterministic first
+Shell commands and URLs before UI, accessibility tree before pixels. Coordinate clicks are off by
+default.
+
+</td>
+<td width="33%" valign="top">
+
+### ✅ Verified
+Every step has an OS-level postcondition (a window, process, file or output) that is polled,
+retried and enforced.
+
+</td>
+</tr>
+</table>
+
+## 📊 Results at a glance
+
+<div align="center">
+
+| | Reference plans | `llama3:8b` plans | From real speech |
+|:---|:---:|:---:|:---:|
+| **Task success** | **50 / 50** | **30 / 30** | **44 / 50** |
+| Exact transcripts | | | **50 / 50** |
+
+| UI tasks, without → with accessibility grounding | ASR latency after speech ends | Share of the wait spent planning |
+|:---:|:---:|:---:|
+| **0/3 → 15/15** | **441 ms** (`base.en`, CPU) | **90 %** (local LLM) |
+
+</div>
+
+> [!NOTE]
+> All runs are on a laptop CPU (Intel Core Ultra 9 285H, no GPU), with machine-checked ground truth
+> and failures reported as measured. **[Full results, method and hardware →](docs/RESULTS.md)**
+
+## 🧠 How it works
+
+```mermaid
+flowchart LR
+    MIC([🎙️ Speech]) --> EP[Endpointer] --> ASR[faster-whisper<br/>base.en]
+    ASR -->|transcript| PL[LLM planner<br/>llama3:8b · Ollama]
+    PL -->|validated plan| DI{Dispatcher}
+    DI -->|1| DET[Deterministic<br/>shell · URL]
+    DI -->|2| UIA[UI Automation<br/>grounding]
+    DI -.->|3 · opt-in| VIS[Coordinate<br/>fallback]
+    DET & UIA & VIS --> VE[Verifier<br/>OS postcondition]
+    VE -->|retry| DI
+    VE -->|verified| FB([🔊 Speech + glass HUD])
+
+    classDef hear fill:#1F5FA8,color:#fff,stroke:#1F5FA8
+    classDef think fill:#C8740A,color:#fff,stroke:#C8740A
+    classDef act fill:#0E8A6D,color:#fff,stroke:#0E8A6D
+    classDef verify fill:#8E5BA8,color:#fff,stroke:#8E5BA8
+    class EP,ASR hear
+    class PL think
+    class DI,DET,UIA,VIS act
+    class VE verify
 ```
 
-## Documentation
+1. **Hear.** An energy endpointer detects the end of speech, and Faster-Whisper transcribes it on the CPU.
+2. **Think.** A local LLM writes a plan of typed actions. Pydantic validates it, and an invalid plan
+   goes back to the LLM for repair.
+3. **Act.** Each step runs on the most deterministic route that can do it.
+4. **Verify.** The step's postcondition is checked against live OS state, with bounded retries.
 
-| Document | Read it if you... |
-|----------|-------------------|
-| [docs/ROADMAP.md](docs/ROADMAP.md) | want to know who owns what, and the phase plan |
-| [docs/specs/](docs/specs/) | are implementing a module: one spec per member (P1–P4) |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | are about to open a PR, or need a contract changed |
-| [AGENTS.md](AGENTS.md) | are an AI coding assistant (or directing one) |
-| [docs/MASTER_SPEC.md](docs/MASTER_SPEC.md) | want the original system design and its deviations |
+The **glass safety HUD** shows every stage live. It never takes focus, is invisible to screen
+capture, and is skipped by grounding. Its Stop button, or <kbd>Esc</kbd> <kbd>Esc</kbd>, aborts the task.
 
-## Setup
+**[Architecture, state machine and module contracts →](docs/ARCHITECTURE.md)**
+
+## 🚀 Quick start
+
+> [!IMPORTANT]
+> Requirements: **Windows 11**, [**uv**](https://docs.astral.sh/uv/), [**Ollama**](https://ollama.com)
+> and a microphone. The core and its tests also run on Linux and macOS, without the desktop modules.
 
 ```powershell
-uv sync                 # creates .venv (Python 3.12), installs runtime + dev deps
-uv run pytest           # run the test suite
-uv run ruff check . ; uv run mypy   # lint + strict type check
+git clone https://github.com/KrishKamra/Clavix.git
+cd Clavix
+uv sync --all-extras          # Python 3.12, Whisper, UI Automation, speech, HUD
+ollama pull llama3:8b
+
+uv run clavix                 # speak a command after the "listening" line
+uv run clavix "open notepad and click the file menu"   # or type one
 ```
 
-For the default planner, run a local Ollama model (`ollama pull llama3:8b`). To use Gemini
-instead, set `planner.provider: gemini` in `configs/default_config.yaml` and export
-`GEMINI_API_KEY`.
+Pick a microphone in a git-ignored `configs/local.yaml` (`modules.acoustic.options.input_device`)
+and run `uv run clavix --config configs/local.yaml`.
 
-## Usage
+<details>
+<summary><b>Try these commands</b></summary>
+
+| Command | What Clavix does |
+|---|---|
+| *"open github"* | Opens the URL and waits for the window |
+| *"create a file called note.txt in the workspace containing hello"* | Writes the file and checks it exists |
+| *"take a screenshot and save it to the workspace as screen.png"* | Captures the screen (the HUD is excluded) |
+| *"open notepad and click the file menu"* | Launches Notepad, finds **File** in the accessibility tree, opens it |
+| *"click the start button"* | Finds **Start** on the taskbar by name |
+
+</details>
+
+<details>
+<summary><b>Run the benchmark</b></summary>
 
 ```powershell
-uv run clavix "open github"                 # one command
-uv run clavix --states                      # interactive; prints state transitions
-uv run clavix-bench --planner reference     # benchmark execution with reference plans
-uv run clavix-bench --planner llm --tiers 1 2
-uv run clavix-bench --planner llm --repeat 5 --cleanup          # 5 runs per task; close apps it opened
-uv run clavix-bench --planner llm --audio --repeat 5 --cleanup  # commands spoken from tests/fixtures/audio
-uv run python -m clavix.evaluation.metrics benchmarks/results_<run>.csv --out benchmarks/summary
+uv run clavix-bench --planner reference --repeat 5 --cleanup     # execution + verification only
+uv run clavix-bench --planner llm --repeat 3 --cleanup           # plans from a local LLM
+uv run clavix-bench --planner llm --audio --repeat 5 --cleanup   # end to end from recorded speech
 ```
 
-`--audio` needs `uv sync --extra acoustic`. With `--planner llm`, results also report plan accuracy
-against the reference plans; with `--audio`, the transcript and its word error rate.
+> [!WARNING]
+> The benchmark drives your real desktop: it opens browser tabs and Notepad, writes files and takes
+> screenshots. Save your work first and don't use the machine while it runs.
 
-`--planner reference` replaces the LLM with each task's reference plan, so the run measures
-execution and verification only. `--planner llm` plans from the raw command text. Results
-are written to `benchmarks/results_<timestamp>.csv` and `.json`. Each run gets a fresh
-scratch directory under `benchmarks/runs/<timestamp>/workspace`.
+</details>
 
-Running the benchmark has real side effects: it opens browser tabs, writes files to the run
-workspace, takes screenshots and, on Windows, launches Notepad.
+## 🛡️ Safety
 
-## Layout
+| Guard | What it does |
+|---|---|
+| Blocked commands | `execution.blocked_command_patterns`: the dispatcher refuses matching shell commands |
+| Typed plans | Only a fixed vocabulary of actions, each validated before anything runs |
+| No blind clicking | The coordinate fallback is off by default and needs explicit coordinates |
+| Abort | HUD Stop button, <kbd>Esc</kbd> <kbd>Esc</kbd>, or the PyAutoGUI corner fail-safe |
 
-```text
-clavix/
-  schemas/actions.py       ActionStep / ExecutionPlan / ExecutionResult + typed payloads
-  schemas/telemetry.py     StepTelemetry, VerificationResult, TaskOutcome, BenchmarkRecord
-  core/planner.py          Prompt templates, Ollama/Gemini/Mock clients, schema-repair loop
-  core/state_machine.py    ClavixAgent: the async closed loop
-  core/verifier.py         Postcondition assertions (polled for live OS state)
-  execution/dispatcher.py  Path router, safety policy, abort + PyAutoGUI fail-safe
-  execution/native_ops.py  launch_url, run_cli, spawn_process, take_screenshot
-  modules/                 Contracts + stubs for teammates (see below)
-  evaluation/harness.py    Benchmark runner (clavix-bench)
-  evaluation/metrics.py    Success-rate and latency tables
-  runtime.py               Composition root: builds components from config
-  config.py                Typed config (configs/default_config.yaml)
-  testing/fakes.py         In-memory fakes of every interface
-  testing/contracts.py     Conformance suites each module implementation must pass
-docs/                      Master spec, roadmap, per-member specs
-configs/
-  default_config.yaml      Runtime configuration
-  benchmark_suite.json     10 tasks, tiers 1-3
-```
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-## Plan format
+## 📚 Documentation
 
-```json
-{
-  "steps": [
-    {"step_id": 1, "action_type": "DETERMINISTIC", "action_name": "launch_url",
-     "payload": {"url": "https://github.com"},
-     "expected_postcondition": "window_title_contains:GitHub"}
-  ]
+| Document | Read it to… |
+|---|---|
+| [**Results**](docs/RESULTS.md) | see every benchmark, the hardware and how to reproduce the numbers |
+| [**Architecture**](docs/ARCHITECTURE.md) | understand the loop, the dispatch ladder, plans and module contracts |
+| [HUD design](docs/design/HUD_DESIGN.md) | see the glass HUD's design system and Windows recipe |
+| [Roadmap](docs/ROADMAP.md) | see who built what, phase by phase |
+| [Member specs](docs/specs/) | read the specification each module was built against |
+| [Contributing](CONTRIBUTING.md) · [Agents](AGENTS.md) | open a pull request, alone or with an AI assistant |
+| [Changelog](CHANGELOG.md) | see what changed in each release |
+
+## 👥 Team
+
+Built at the **Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai**.
+
+| Member | Built |
+|---|---|
+| **Krish Kamra** | Architecture, agent core, planner, dispatcher, verifier, evaluation and integration |
+| **Shreyash Pathak** | Acoustic ingestion: endpointing and Faster-Whisper |
+| **Varun Agrawal** | Structural grounding with Windows UI Automation |
+| **Aditya Angane** | Spoken feedback, the glass safety HUD and the abort hotkey |
+
+More in [AUTHORS.md](AUTHORS.md).
+
+## 📝 Citation
+
+If Clavix helps your research, please cite it ([CITATION.cff](CITATION.cff)):
+
+```bibtex
+@software{clavix2026,
+  title  = {Clavix: Deterministic, Closed-Loop Voice-to-Action Automation of the Windows Desktop},
+  author = {Kamra, Krish and Pathak, Shreyash and Agrawal, Varun and Angane, Aditya},
+  year   = {2026},
+  url    = {https://github.com/KrishKamra/Clavix},
+  version = {0.1.0}
 }
 ```
 
-| `action_name`     | `action_type`                     | payload                                                  |
-|-------------------|-----------------------------------|----------------------------------------------------------|
-| `launch_url`      | DETERMINISTIC                     | `url`                                                    |
-| `run_command`     | DETERMINISTIC                     | `cmd`, `timeout_sec=10`, `detach=false`                  |
-| `take_screenshot` | DETERMINISTIC                     | `filepath`, `target_region=[left, top, width, height]?`  |
-| `click_element`   | OS_GROUNDING / VISUAL_FALLBACK    | `target_label`, `fallback_coord=[x, y]?`                 |
-| `speak_feedback`  | FEEDBACK                          | `message`, `blocking=false`                              |
+## ⚖️ License
 
-Postconditions use the form `<kind>:<argument>`. The kinds are `window_title_contains`,
-`process_running`, `file_exists`, `exit_code` and `stdout_contains`. The first three are
-polled for up to `verifier.timeout_sec`. On Windows, window titles come from `pygetwindow`.
-On other platforms they are reported as `UNSUPPORTED` until the AT-SPI module provides them.
+[MIT](LICENSE) © 2026 Krish Kamra, Shreyash Pathak, Varun Agrawal and Aditya Angane.
 
-The LLM only writes `steps`. Clavix assigns `plan_id` (UUID4) and `original_prompt`. If the
-LLM returns an invalid plan, the validation error is sent back to it for up to
-`planner.max_retries` repair attempts.
-
-## Teammate integration points
-
-| Module                  | Owner    | Implement                                                                       |
-|-------------------------|----------|---------------------------------------------------------------------------------|
-| `modules/acoustic.py`   | Person 2 | `AcousticInterface.listen() -> Transcript(text, t_asr_ms, confidence)`          |
-| `modules/grounding.py`  | Person 3 | `GroundingInterface.resolve_element`, `invoke_element`, `click_coordinate`      |
-| `modules/feedback.py`   | Person 4 | `FeedbackInterface.speak`, optional `on_state_change` for the HUD               |
-
-Implementations are selected in `configs/default_config.yaml` under `modules.<name>.class`,
-so plugging in a module never requires editing core code. Each implementation must pass its
-suite in `clavix/testing/contracts.py`.
-
-Acoustic input is integrated: `WhisperAcoustic` (microphone, energy endpointing,
-Faster-Whisper `base.en`) is the default, so interactive `uv run clavix` listens for speech
-(`uv sync --extra acoustic`; wait for the `listening` line). Pick a microphone with
-`input_device` in a git-ignored `configs/local.yaml` and pass `--config configs/local.yaml`.
-For typed input, set the class back to `clavix.modules.acoustic:ConsoleAcoustic`.
-
-Grounding is integrated: `UIAGrounding` finds on-screen elements by accessible name in the
-Windows UI Automation tree (`uv sync --extra grounding`) and activates them through UIA
-patterns, with a coordinate click as the last resort. Tier 3 went from 0/3 (Phase 1, stub
-grounding) to 3/3 with reference plans.
-
-The remaining stand-in is `ConsoleFeedback`, until P4's TTS and glass HUD land. A HUD abort
-button calls `FeedbackInterface.request_abort()`.
-
-## Safety
-
-- `execution.blocked_command_patterns` is a list of regexes. The dispatcher refuses any
-  shell command that matches one of them.
-- Visual fallback is disabled by default (`execution.enable_visual_fallback`).
-- `pyautogui.FAILSAFE` is forced on before any coordinate input. Moving the mouse into a
-  screen corner raises `AbortRequested`, which stops the task.
+<div align="center"><sub>Made with care in Mumbai · <a href="CODE_OF_CONDUCT.md">Code of conduct</a></sub></div>
