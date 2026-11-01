@@ -197,6 +197,16 @@ class ActionStep(BaseModel):
                 f"action '{self.action_name}' cannot use action_type '{self.action_type}'; allowed: {names}"
             )
         typed = PAYLOAD_MODELS[self.action_name].model_validate(self.payload)
+        if (
+            self.action_type is ActionType.VISUAL_FALLBACK
+            and isinstance(typed, ClickElementPayload)
+            and typed.fallback_coord is None
+        ):
+            # It could never execute; rejecting it here lets the planner's repair round fix it.
+            raise ValueError(
+                "VISUAL_FALLBACK needs fallback_coord [x, y]; "
+                "use OS_GROUNDING to click an element by its label"
+            )
         # Store the normalised, JSON-safe form so plans round-trip cleanly.
         self.payload = typed.model_dump(mode="json")
         return self

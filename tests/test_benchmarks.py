@@ -311,7 +311,7 @@ class TestComparePlans:
         assert compare_plans([_step(1)], [_step(1, "run_command", cmd="a")]) == (False, False)
         assert compare_plans([_step(1)], [_step(1), _step(2)]) == (False, False)
         grounded = _step(1, "click_element", "OS_GROUNDING", target_label="OK")
-        visual = _step(1, "click_element", "VISUAL_FALLBACK", target_label="OK")
+        visual = _step(1, "click_element", "VISUAL_FALLBACK", target_label="OK", fallback_coord=(5, 5))
         assert compare_plans([grounded], [visual]) == (False, False)
 
     def test_postconditions_are_ignored(self) -> None:
