@@ -25,7 +25,6 @@ Report it privately through **[GitHub private vulnerability reporting](https://g
 - your Clavix commit, Windows build and planner model.
 
 We aim to acknowledge a report within **7 days** and to agree on a fix and disclosure date with you.
-Clavix is an academic project maintained by students, so please allow for exam periods.
 
 ## What counts
 

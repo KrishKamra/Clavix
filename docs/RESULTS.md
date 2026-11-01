@@ -5,6 +5,7 @@
 # Results
 
 **Every number on this page comes from a result file produced by `clavix-bench` on the machine below.**
+The method behind them is described in the [research paper](paper/Clavix_Research_Paper.pdf).
 
 </div>
 
