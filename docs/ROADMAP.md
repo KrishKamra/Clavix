@@ -61,9 +61,11 @@ anyone else: every module is testable with the fakes and contract suites that al
 - Polished on a real desktop: bounded searches (a slow desktop window and a blocking `GetChildren()`
   had made a miss take minutes), exact matches beat partial ones (the taskbar's "File Explorer" had
   won over Notepad's "File"), and the pure tests now run on Linux CI.
-- `--planner llm`, Tier 3: T3-01 and T3-03 pass 3/3. T3-02 fails: the model invents an unverifiable
-  postcondition (`window_title_contains:Windows Start menu`). Plans without coordinates for
-  `VISUAL_FALLBACK` now fail validation, so the repair round switches them to `OS_GROUNDING`.
+- `--planner llm` (`llama3:8b`, `--repeat 3`): **30/30 across all tiers**. Two planner fixes got T3-02
+  there: plans using `VISUAL_FALLBACK` without coordinates now fail validation, so the repair round
+  switches them to `OS_GROUNDING`; and the prompt forbids guessed window titles (the model added
+  `window_title_contains:Windows Start menu` to clicks). Only those 3 invented checks disappeared; all
+  `file_exists`, `stdout_contains` and launched-app title checks remain.
 
 **Status (2026-11-01): P1-1 to P1-4 are done** (`llama3:8b`, `--repeat 3 --cleanup`, 30 runs each;
 Tier 3 needs P3's grounding):

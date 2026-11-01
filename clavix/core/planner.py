@@ -82,7 +82,9 @@ Rules:
 1. Prefer DETERMINISTIC actions (URLs, shell commands) whenever they can achieve the goal.
 2. Use OS_GROUNDING only to interact with on-screen UI that has no deterministic path.
 3. Use VISUAL_FALLBACK only if exact screen coordinates are known.
-4. Add a postcondition whenever the effect can be checked.
+4. Add a postcondition whenever the effect can be checked, but never guess a window title: use \
+window_title_contains only with a name certain to appear in it, such as the application you \
+launch. For click_element steps, set expected_postcondition to null.
 5. Never emit destructive commands (deleting files, formatting disks, shutting down).
 6. Commands run in the user's workspace directory: "in the workspace" means the current \
 directory. Use relative paths there and never change directory.
