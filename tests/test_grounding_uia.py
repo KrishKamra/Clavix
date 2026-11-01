@@ -5,18 +5,29 @@ Structure
 - ``TestNormalize`` — pure ``_normalize`` unit tests; no UIA, runs on Linux.
 - ``TestScore`` — pure ``_score`` unit tests; no UIA, runs on Linux.
 - ``TestTiebreak`` — tie-break ordering tests using simple stand-in objects; no UIA, runs on Linux.
+- ``TestDeadlines`` — searches stop at their deadline; a fake ``uiautomation``; runs on Linux.
 - ``TestUIAGroundingContract`` — contract suite inheriting ``GroundingContract``; Windows only.
 - ``TestDesktop`` — desktop integration tests, Windows only, marked ``desktop``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import sys
+import time
+import types
+from typing import Any
 
 import pytest
 
-from clavix.modules.grounding_uia import _normalize, _score
+from clavix.modules import grounding_uia
+from clavix.modules.grounding import UIElement
+from clavix.modules.grounding_uia import UIAGrounding, _normalize, _score
 from clavix.testing.contracts import GroundingContract
+
+# Only the UIA-backed suites need Windows; the pure tests below run everywhere, including Linux CI.
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows UI Automation")
 
 # ---------------------------------------------------------------------------
 # Pure-function unit tests (no UIA, runs on Linux)
@@ -50,6 +61,10 @@ class TestNormalize:
 
     def test_strip_ellipsis_unicode(self) -> None:
         assert _normalize("Open\u2026") == "open"
+
+    def test_only_a_trailing_ellipsis_is_stripped(self) -> None:
+        assert _normalize("Save as... ") == "save as"
+        assert _normalize("Wait...for it") == "wait...for it"
 
     def test_collapse_whitespace(self) -> None:
         assert _normalize("  New   Tab  ") == "new tab"
@@ -203,17 +218,185 @@ class TestTiebreak:
         assert key_shallow < key_deep
 
 
+class _SlowWalkAuto:
+    """Stand-in for ``uiautomation``: every walked node takes ``node_sec``."""
+
+    UIAutomationInitializerInThread = staticmethod(contextlib.nullcontext)
+
+    def __init__(self, nodes: int, node_sec: float) -> None:
+        self.nodes, self.node_sec = nodes, node_sec
+
+    def WalkControl(self, root: Any, includeTop: bool = False, maxDepth: int = 0) -> Any:
+        for depth in range(self.nodes):
+            time.sleep(self.node_sec)
+            yield root, depth
+
+
+class TestDeadlines:
+    """Slow UIA providers must not push a search past its deadline (no real UIA needed)."""
+
+    def test_scope_walk_stops_at_the_deadline(self) -> None:
+        g = UIAGrounding()
+        fake = _SlowWalkAuto(nodes=1000, node_sec=0.01)
+        start = time.monotonic()
+        with pytest.raises(grounding_uia._DeadlineExceeded):
+            g._try_scope([object()], "file", fake, [0], [0.0], deadline=time.monotonic() + 0.1)
+        assert time.monotonic() - start < 0.5
+
+    def test_search_returns_none_instead_of_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        g = UIAGrounding()
+
+        def slow_scopes(*args: Any) -> Any:
+            raise grounding_uia._DeadlineExceeded
+
+        monkeypatch.setattr(g, "_search_scopes", slow_scopes)
+        assert g._search_once("file", object(), deadline=0.0) == (None, 0, 0.0)
+
+    def test_resolve_returns_on_time_even_if_a_uia_call_stalls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = types.ModuleType("uiautomation")
+        fake.UIAutomationInitializerInThread = contextlib.nullcontext  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "uiautomation", fake)
+        g = UIAGrounding(timeout_sec=0.3, poll_interval_sec=0.05)
+        monkeypatch.setattr(g, "_search_once", lambda *a, **k: time.sleep(3) or (None, 0, 0.0))
+        start = time.monotonic()
+        try:
+            assert asyncio.run(g.resolve_element("File")) is None
+            assert time.monotonic() - start < 0.3 + grounding_uia._DEADLINE_SLACK_SEC + 0.4
+        finally:
+            g.close()
+
+    def test_resolve_returns_a_hit_immediately(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = types.ModuleType("uiautomation")
+        fake.UIAutomationInitializerInThread = contextlib.nullcontext  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "uiautomation", fake)
+        g = UIAGrounding(timeout_sec=5.0)
+        hit = UIElement("File", "MenuItemControl", (0, 0, 40, 20))
+        monkeypatch.setattr(g, "_search_once", lambda *a, **k: (hit, 1, 1.0))
+        start = time.monotonic()
+        try:
+            assert asyncio.run(g.resolve_element("&File")) == hit
+            assert time.monotonic() - start < 1.0
+        finally:
+            g.close()
+
+
+class _Rect:
+    def __init__(self, left: int, top: int, right: int, bottom: int) -> None:
+        self.left, self.top, self.right, self.bottom = left, top, right, bottom
+
+    def width(self) -> int:
+        return self.right - self.left
+
+    def height(self) -> int:
+        return self.bottom - self.top
+
+
+class _FakeControl:
+    def __init__(self, name: str, control_type: str, class_name: str = "", children: Any = ()) -> None:
+        self.Name, self.ControlTypeName, self.ClassName = name, control_type, class_name
+        self.AutomationId, self.IsEnabled, self.IsOffscreen, self.IsControlElement = "", True, False, True
+        self.BoundingRectangle = _Rect(0, 0, 40, 20)
+        self.NativeWindowHandle = id(self)
+        self.children = list(children)
+
+
+class _FakeDesktopAuto:
+    """No foreground window and no taskbar; only the windows given to scope 3."""
+
+    def __init__(self) -> None:
+        self.walked: list[str] = []
+
+    def GetForegroundControl(self) -> None:
+        return None
+
+    def ControlFromHandle(self, hwnd: int) -> None:
+        return None
+
+    def WalkControl(self, root: _FakeControl, includeTop: bool = False, maxDepth: int = 0) -> Any:
+        self.walked.append(root.Name)
+        for child in root.children:
+            yield child, 1
+
+
+class TestScopeThreeOrder:
+    def test_front_window_wins_and_windows_behind_are_not_walked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notepad = _FakeControl(
+            "Untitled - Notepad", "WindowControl", children=[_FakeControl("File", "MenuItemControl")]
+        )
+        browser = _FakeControl(
+            "Report.pdf - Brave", "WindowControl", children=[_FakeControl("File", "ButtonControl")]
+        )
+        desktop = _FakeControl("Program Manager", "PaneControl", class_name="Progman")
+        monkeypatch.setattr(grounding_uia, "_top_level_controls", lambda auto: [desktop, notepad, browser])
+        fake = _FakeDesktopAuto()
+
+        element, _, score = UIAGrounding()._search_once("file", fake)
+
+        assert element is not None and score == 1.0
+        # A button outranks a menu item within one window, but Notepad is in front.
+        assert element.control_type == "MenuItemControl"
+        assert fake.walked == ["Untitled - Notepad"]  # desktop sorted last; Brave never walked
+
+    @staticmethod
+    def taskbar(*names: str) -> _FakeControl:
+        buttons = [_FakeControl(name, "ButtonControl") for name in names]
+        return _FakeControl("Taskbar", "PaneControl", class_name="Shell_TrayWnd", children=buttons)
+
+    def test_exact_match_behind_beats_a_partial_taskbar_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Seen on Windows 11: "file" is a 0.90 prefix match for the taskbar's File Explorer button.
+        notepad = _FakeControl(
+            "Untitled - Notepad", "WindowControl", children=[_FakeControl("File", "MenuItemControl")]
+        )
+        windows = [self.taskbar("File Explorer - 1 running window"), notepad]
+        monkeypatch.setattr(grounding_uia, "_top_level_controls", lambda auto: windows)
+
+        element, _, _ = UIAGrounding()._search_once("file", _FakeDesktopAuto())
+
+        assert element is not None and (element.label, element.control_type) == ("File", "MenuItemControl")
+
+    def test_without_an_exact_match_the_first_partial_in_scope_order_wins(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        other = _FakeControl(
+            "Settings", "WindowControl", children=[_FakeControl("Open firefox", "ButtonControl")]
+        )
+        windows = [self.taskbar("Firefox - 1 running window pinned"), other]
+        monkeypatch.setattr(grounding_uia, "_top_level_controls", lambda auto: windows)
+
+        element, _, _ = UIAGrounding()._search_once("firefox", _FakeDesktopAuto())
+
+        assert element is not None and element.label == "Firefox - 1 running window pinned"
+
+    def test_deadline_keeps_the_partial_match_found_so_far(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class SlowAfterTaskbar(_FakeDesktopAuto):
+            def WalkControl(self, root: _FakeControl, includeTop: bool = False, maxDepth: int = 0) -> Any:
+                if root.Name == "Slow window":
+                    raise grounding_uia._DeadlineExceeded
+                yield from super().WalkControl(root, includeTop, maxDepth)
+
+        windows = [
+            self.taskbar("Firefox - 1 running window pinned"),
+            _FakeControl("Slow window", "WindowControl"),
+        ]
+        monkeypatch.setattr(grounding_uia, "_top_level_controls", lambda auto: windows)
+
+        element, _, _ = UIAGrounding()._search_once("firefox", SlowAfterTaskbar())
+
+        assert element is not None and element.label == "Firefox - 1 running window pinned"
+
+
 # ---------------------------------------------------------------------------
-# Contract suite — Windows only (skipped on Linux at collection time)
+# Contract suite — Windows only
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows UI Automation")
 
-
+@windows_only
 class TestUIAGroundingContract(GroundingContract):
     """GroundingContract conformance suite wired to UIAGrounding."""
 
-    resolve_timeout_sec = 1.0
+    resolve_timeout_sec = 3.0  # the production default; a large foreground app makes 1 s borderline
     known_label = "Start"
 
     @pytest.fixture
@@ -230,46 +413,41 @@ class TestUIAGroundingContract(GroundingContract):
 # ---------------------------------------------------------------------------
 
 
+@windows_only
 @pytest.mark.desktop
 class TestDesktop:
     """Desktop tests: drive real Windows UI elements."""
 
     @pytest.fixture
-    def grounding(self):
-        from clavix.modules.grounding_uia import UIAGrounding
-
+    def grounding(self) -> Any:
         g = UIAGrounding(timeout_sec=5.0, poll_interval_sec=0.2)
         yield g
         g.close()
 
-    def test_notepad_file_menu(self, grounding: object) -> None:
-        """Launch Notepad, open File menu, assert a child item appears, then clean up."""
-        import asyncio
+    def test_notepad_file_menu(self, grounding: UIAGrounding) -> None:
+        """Launch Notepad, open File, see a menu item appear, then close only that Notepad."""
         import subprocess
-        import time
 
-        from clavix.modules.grounding_uia import UIAGrounding
+        import pyautogui
 
-        assert isinstance(grounding, UIAGrounding)
+        from clavix.evaluation.harness import kill_pids, list_pids
 
-        proc = subprocess.Popen(["notepad.exe"])
+        before = list_pids(["notepad.exe"])
+        subprocess.Popen(["notepad.exe"])
         try:
-            # Wait for the window to appear.
-            time.sleep(1.5)
-
-            file_elem = asyncio.run(grounding.resolve_element("File"))
+            file_elem = asyncio.run(grounding.resolve_element("File"))  # polls while Notepad starts
             assert file_elem is not None, "Could not find 'File' in Notepad"
-            ok = asyncio.run(grounding.invoke_element(file_elem))
-            assert ok, "invoke_element returned False for 'File'"
+            assert asyncio.run(grounding.invoke_element(file_elem)), (
+                "invoke_element returned False for 'File'"
+            )
 
-            # After opening the menu, "New tab" or "New" should appear.
-            new_elem = asyncio.run(grounding.resolve_element("New tab"))
-            if new_elem is None:
-                new_elem = asyncio.run(grounding.resolve_element("New"))
-            assert new_elem is not None, "Expected 'New tab' or 'New' to appear after opening File menu"
-            assert new_elem.control_type == "MenuItemControl"
-
-            import pyautogui
+            # "New tab" is ambiguous (Windows 11 Notepad also has a "+" tab-strip button with
+            # that name), so probe labels that exist only in the open File menu.
+            item = asyncio.run(grounding.resolve_element("New window"))
+            if item is None:
+                item = asyncio.run(grounding.resolve_element("Save as"))
+            assert item is not None, "Expected 'New window' or 'Save as' after opening the File menu"
+            assert item.control_type == "MenuItemControl"
 
             old_failsafe = pyautogui.FAILSAFE
             try:
@@ -277,32 +455,30 @@ class TestDesktop:
                 pyautogui.press("escape")
             finally:
                 pyautogui.FAILSAFE = old_failsafe
-            time.sleep(0.3)
         finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+            # Windows 11 Notepad may hand the window to another process: kill every new one.
+            time.sleep(0.3)
+            kill_pids(list_pids(["notepad.exe"]) - before)
 
-    def test_start_button_toggle(self, grounding: object) -> None:
-        """Resolve and invoke Start, assert the Start menu opened, invoke again to close."""
-        import asyncio
-        import time
+    def test_start_button_toggle(self, grounding: UIAGrounding) -> None:
+        """Invoke Start, check the menu is open (toggle state On), invoke again to close it."""
 
-        from clavix.modules.grounding_uia import UIAGrounding
+        def toggle_state(element: UIElement) -> int:
+            # UIElement.native may only be used on the grounding's UIA worker thread.
+            import uiautomation as auto
 
-        assert isinstance(grounding, UIAGrounding)
+            pattern = element.native.GetPattern(auto.PatternId.TogglePattern)
+            return int(pattern.ToggleState)
 
-        # Open Start menu.
         start_elem = asyncio.run(grounding.resolve_element("Start"))
         assert start_elem is not None, "Could not resolve 'Start' button"
-        ok = asyncio.run(grounding.invoke_element(start_elem))
-        assert ok, "invoke_element returned False for 'Start'"
-        time.sleep(0.8)  # allow the menu animation to complete
-
-        titles_open = grounding.list_window_titles()
-        assert isinstance(titles_open, list)
-
-        # Close the Start menu by invoking Start again.
-        start_elem2 = asyncio.run(grounding.resolve_element("Start"))
-        assert start_elem2 is not None
-        asyncio.run(grounding.invoke_element(start_elem2))
-        time.sleep(0.5)
+        assert asyncio.run(grounding.invoke_element(start_elem)), "invoke_element returned False for 'Start'"
+        time.sleep(0.8)  # menu animation
+        try:
+            assert asyncio.run(grounding._run_on_worker(lambda: toggle_state(start_elem))) == 1, (
+                "menu not open"
+            )
+        finally:
+            asyncio.run(grounding.invoke_element(start_elem))
+            time.sleep(0.5)
+        assert asyncio.run(grounding._run_on_worker(lambda: toggle_state(start_elem))) == 0, "menu not closed"

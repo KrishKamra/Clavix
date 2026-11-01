@@ -25,6 +25,23 @@ lazily spawns a secondary auxiliary worker attached to ``"Default"`` so that
 system controls like the Taskbar and Start button can always be found and
 invoked seamlessly.
 
+Deadlines
+---------
+Some UIA providers are very slow: on the dev machine, walking the desktop window
+(``Progman``, 88 elements) took about 10 s while every app window took under 0.4 s.
+Searches therefore check the deadline between individual UIA calls, walk the desktop
+last, and :meth:`UIAGrounding.resolve_element` stops waiting at the deadline, so a
+miss returns ``None`` within ``timeout_sec`` plus at most one slow UIA call.
+
+Search order
+------------
+Scopes run in spec order (foreground window, taskbar, other windows front to back), but
+an exact match (score 1.0) anywhere beats a partial match in an earlier scope: with
+Notepad behind another window, "File" must find Notepad's "File" menu, not the taskbar's
+"File Explorer - 1 running window" (a 0.90 prefix match, observed on Windows 11). The
+first partial match, in scope order, is the fallback when no scope has an exact match,
+including when the deadline passes.
+
 Platform
 --------
 ``uiautomation`` is Windows-only.  This module imports cleanly on Linux/macOS
@@ -41,6 +58,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from concurrent.futures import Future
 from typing import Any
 
@@ -68,6 +86,58 @@ _CONTROL_TYPE_PRIORITY: list[str] = [
 # Sentinel used to stop worker threads.
 _STOP = object()
 
+# Top-level windows with slow UIA providers that rarely hold the target; searched last.
+_SLOW_ROOT_CLASSES = frozenset({"Progman", "WorkerW"})
+
+# Extra wait after the deadline for an in-flight UIA call before giving up on it.
+_DEADLINE_SLACK_SEC = 0.5
+
+
+class _DeadlineExceeded(Exception):
+    """Raised inside a search when its deadline passes."""
+
+
+def _visible_top_level_windows() -> list[int]:
+    """Handles of visible, uncloaked top-level windows, in z-order (topmost first).
+
+    Uses Win32 ``EnumWindows`` rather than ``GetRootControl().GetChildren()``: the UIA
+    raw view also walks hidden top-level windows, and one belonging to a suspended or
+    stuck process blocks that call indefinitely (observed on Windows 11 26H2).
+    """
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    user32, dwmapi = ctypes.windll.user32, ctypes.windll.dwmapi
+    handles: list[int] = []
+
+    def collect(hwnd: int, _lparam: int) -> bool:
+        if user32.IsWindowVisible(hwnd):
+            cloaked = ctypes.c_int(0)  # DWMWA_CLOAKED: suspended UWP apps, other virtual desktops
+            dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+            if not cloaked.value:
+                handles.append(hwnd)
+        return True
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(collect)
+    user32.EnumWindows(callback, 0)
+    return handles
+
+
+def _top_level_controls(auto: Any) -> list[Any]:
+    """UIA controls for the visible top-level windows (see :func:`_visible_top_level_windows`)."""
+    controls = []
+    for hwnd in _visible_top_level_windows():
+        try:
+            control = auto.ControlFromHandle(hwnd)
+        except Exception:
+            logger.debug("ControlFromHandle(%s) failed", hwnd, exc_info=True)
+            continue
+        if control is not None:
+            controls.append(control)
+    return controls
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers — no uiautomation import; work on Linux too.
@@ -81,13 +151,13 @@ def _normalize(s: str) -> str:
     1. Casefold.
     2. Remove ``&`` access-key markers.
     3. Cut at the first ``\\t`` (keyboard-shortcut suffix).
-    4. Strip a trailing ``...`` or ``…``.
+    4. Strip a trailing ``...`` or ``…`` (an ellipsis inside the name is kept).
     5. Collapse runs of whitespace to a single space, then strip.
     """
     s = s.casefold()
     s = s.replace("&", "")
     s = s.split("\t", 1)[0]
-    s = re.sub(r"\.\.\.|…", "", s)
+    s = re.sub(r"(?:\.\.\.|…)\s*$", "", s.rstrip())
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -255,10 +325,8 @@ class UIAGrounding(GroundingInterface):
 
     async def _run_on_worker(self, fn: Any, aux: bool = False) -> Any:
         """Run *fn* on the appropriate worker thread and await the result."""
-        loop = asyncio.get_running_loop()
         worker = self._aux_worker if (aux and self._aux_worker is not None) else self._primary_worker
-        fut = worker.submit(fn)
-        return await loop.run_in_executor(None, fut.result)
+        return await asyncio.wrap_future(worker.submit(fn))
 
     # ------------------------------------------------------------------
     # Internal search helpers (run on worker thread)
@@ -341,34 +409,44 @@ class UIAGrounding(GroundingInterface):
         scanned: list[int],
         best_score: list[float],
         is_aux: bool = False,
+        deadline: float = float("inf"),
     ) -> UIElement | None:
-        """Walk *roots* and return the best-matching element, or ``None``."""
+        """Walk *roots* and return the best-matching element, or ``None``.
+
+        Raises:
+            _DeadlineExceeded: If ``deadline`` (``time.monotonic()``) passes mid-walk.
+        """
+        roots = [r for r in roots if r is not None and not self._is_hud(r)]
         found: list[tuple[float, Any, int]] = []
         for root in roots:
-            if root is None:
-                continue
-            if self._is_hud(root):
-                continue
             controls_to_check: list[tuple[Any, int]] = [(root, 0)]
             try:
                 for ctrl, depth in auto.WalkControl(root, includeTop=False, maxDepth=self.max_depth):
+                    if time.monotonic() > deadline:
+                        raise _DeadlineExceeded
                     controls_to_check.append((ctrl, depth))
+            except _DeadlineExceeded:
+                raise
             except Exception:
                 logger.debug("WalkControl error on %r", root, exc_info=True)
 
             for ctrl, depth in controls_to_check:
-                if not self._filter_ok(ctrl):
-                    continue
+                if time.monotonic() > deadline:
+                    raise _DeadlineExceeded
                 scanned[0] += 1
+                # Score first (2 cross-process reads); filter only the matches (3 more reads).
                 s = self._score_control(target_norm, ctrl)
                 if s > best_score[0]:
                     best_score[0] = s
-                if s >= self.min_match_score:
+                if s >= self.min_match_score and self._filter_ok(ctrl):
                     found.append((s, ctrl, depth))
 
         if not found:
             return None
+        return self._element_from(found, is_aux)
 
+    def _element_from(self, found: list[tuple[float, Any, int]], is_aux: bool) -> UIElement | None:
+        """Apply the tie-break to *found* and wrap the winner as a :class:`UIElement`."""
         found.sort(key=self._tiebreak_key)
         _score_val, winner, _depth = found[0]
         try:
@@ -387,31 +465,60 @@ class UIAGrounding(GroundingInterface):
             return None
 
     def _search_once(
-        self, target_norm: str, auto: Any, is_aux: bool = False
+        self, target_norm: str, auto: Any, is_aux: bool = False, deadline: float = float("inf")
     ) -> tuple[UIElement | None, int, float]:
-        """Run one full scoped search on the active desktop.
+        """Run one full scoped search on the active desktop, stopping at ``deadline``.
 
         Returns:
-            ``(best_element, candidates_scanned, best_score)``
+            ``(best_element, candidates_scanned, best_score)``; ``(None, ...)`` if the
+            deadline passes before a scope yields a match.
         """
+        partial: list[UIElement] = []  # first partial match, in scope order
+        try:
+            return self._search_scopes(target_norm, auto, is_aux, deadline, partial)
+        except _DeadlineExceeded:
+            logger.debug("search for %r stopped at the deadline", target_norm)
+            return (partial[0] if partial else None), 0, 0.0
+
+    def _search_scopes(
+        self, target_norm: str, auto: Any, is_aux: bool, deadline: float, partial: list[UIElement]
+    ) -> tuple[UIElement | None, int, float]:
         scanned: list[int] = [0]
         best_score: list[float] = [0.0]
+
+        def exact(result: UIElement | None) -> UIElement | None:
+            """Return an exact match; remember the first partial one as the fallback."""
+            if result is None:
+                return None
+            if self._score_control(target_norm, result.native) >= 1.0:
+                return result
+            if not partial:
+                partial.append(result)
+            return None
+
+        def fallback() -> tuple[UIElement | None, int, float]:
+            return (partial[0] if partial else None), scanned[0], best_score[0]
 
         # Scope 1: foreground top-level window.
         try:
             fg = auto.GetForegroundControl()
             if fg is not None:
                 top = fg.GetTopLevelControl()
-                result = self._try_scope(
-                    [top] if top is not None else [],
-                    target_norm,
-                    auto,
-                    scanned,
-                    best_score,
-                    is_aux=is_aux,
+                result = exact(
+                    self._try_scope(
+                        [top] if top is not None else [],
+                        target_norm,
+                        auto,
+                        scanned,
+                        best_score,
+                        is_aux=is_aux,
+                        deadline=deadline,
+                    )
                 )
                 if result is not None:
                     return result, scanned[0], best_score[0]
+        except _DeadlineExceeded:
+            raise
         except Exception:
             logger.debug("Scope 1 (foreground) error", exc_info=True)
 
@@ -427,20 +534,24 @@ class UIAGrounding(GroundingInterface):
                     if tray is not None:
                         taskbar_roots.append(tray)
             if not taskbar_roots:
-                taskbar_roots = [
-                    c for c in auto.GetRootControl().GetChildren() if c.ClassName == "Shell_TrayWnd"
-                ]
-            result = self._try_scope(taskbar_roots, target_norm, auto, scanned, best_score, is_aux=is_aux)
+                taskbar_roots = [c for c in _top_level_controls(auto) if c.ClassName == "Shell_TrayWnd"]
+            result = exact(
+                self._try_scope(
+                    taskbar_roots, target_norm, auto, scanned, best_score, is_aux=is_aux, deadline=deadline
+                )
+            )
             if result is not None:
                 return result, scanned[0], best_score[0]
+        except _DeadlineExceeded:
+            raise
         except Exception:
             logger.debug("Scope 2 (taskbar) error", exc_info=True)
 
         if is_aux:
             # Auxiliary worker is only queried for the system Taskbar / Start button
-            return None, scanned[0], best_score[0]
+            return fallback()
 
-        # Scope 3: all other root children.
+        # Scope 3: all other visible top-level windows.
         try:
             fg_top: Any = None
             try:
@@ -451,7 +562,7 @@ class UIAGrounding(GroundingInterface):
                 logger.debug("Scope 3: could not get foreground top", exc_info=True)
 
             others: list[Any] = []
-            for c in auto.GetRootControl().GetChildren():
+            for c in _top_level_controls(auto):
                 if c.ClassName == "Shell_TrayWnd":
                     continue
                 if fg_top is not None:
@@ -461,14 +572,27 @@ class UIAGrounding(GroundingInterface):
                     except Exception:
                         logger.debug("Scope 3: NativeWindowHandle compare failed", exc_info=True)
                 others.append(c)
+            # Slow shell hosts last (stable sort keeps the rest in z-order).
+            others.sort(key=lambda c: c.ClassName in _SLOW_ROOT_CLASSES)
 
-            result = self._try_scope(others, target_norm, auto, scanned, best_score, is_aux=is_aux)
-            if result is not None:
-                return result, scanned[0], best_score[0]
+            # Front to back, stopping at the first window with an exact match: the window the
+            # user sees wins (Notepad's "File" menu over a browser's "File" button further
+            # back), and slow windows behind it are never walked. This refines the spec's
+            # cross-window tie-break; within a window, the tie-break is unchanged.
+            for window in others:
+                result = exact(
+                    self._try_scope(
+                        [window], target_norm, auto, scanned, best_score, is_aux=is_aux, deadline=deadline
+                    )
+                )
+                if result is not None:
+                    return result, scanned[0], best_score[0]
+        except _DeadlineExceeded:
+            raise
         except Exception:
             logger.debug("Scope 3 (other roots) error", exc_info=True)
 
-        return None, scanned[0], best_score[0]
+        return fallback()
 
     # ------------------------------------------------------------------
     # GroundingInterface implementation
@@ -483,37 +607,47 @@ class UIAGrounding(GroundingInterface):
             The resolved :class:`UIElement`, or ``None`` on a miss.
         """
         target_norm = _normalize(target_label)
+        deadline = time.monotonic() + self.timeout_sec
 
         def _search_primary() -> tuple[UIElement | None, int, float]:
             import uiautomation as auto
 
-            return self._search_once(target_norm, auto, is_aux=False)
+            return self._search_once(target_norm, auto, is_aux=False, deadline=deadline)
 
         def _search_aux() -> tuple[UIElement | None, int, float]:
             import uiautomation as auto
 
-            return self._search_once(target_norm, auto, is_aux=True)
+            return self._search_once(target_norm, auto, is_aux=True, deadline=deadline)
 
-        import time as _time
+        async def _bounded(fn: Any, aux: bool) -> tuple[UIElement | None, int, float]:
+            # The search checks the deadline itself; this guards against one stalled UIA call.
+            wait = max(0.0, deadline - time.monotonic()) + _DEADLINE_SLACK_SEC
+            try:
+                result: tuple[UIElement | None, int, float] = await asyncio.wait_for(
+                    self._run_on_worker(fn, aux=aux), wait
+                )
+            except TimeoutError:
+                logger.debug("resolve %r: UIA call still running at the deadline", target_label)
+                return None, 0, 0.0
+            return result
 
-        deadline = _time.monotonic() + self.timeout_sec
         while True:
             # First search on primary worker thread.
-            elem, scanned, best = await self._run_on_worker(_search_primary, aux=False)
+            elem, scanned, best = await _bounded(_search_primary, aux=False)
             if elem is not None:
                 logger.debug("resolve %r: found on primary (score=%.3f)", target_label, best)
                 return elem  # type: ignore[no-any-return]
 
             # If not found and aux worker exists, search on Default desktop.
             if self._aux_worker is not None:
-                aux_elem, aux_scanned, aux_best = await self._run_on_worker(_search_aux, aux=True)
+                aux_elem, aux_scanned, aux_best = await _bounded(_search_aux, aux=True)
                 scanned += aux_scanned
                 best = max(best, aux_best)
                 if aux_elem is not None:
                     logger.debug("resolve %r: found on aux (score=%.3f)", target_label, aux_best)
                     return aux_elem  # type: ignore[no-any-return]
 
-            remaining = deadline - _time.monotonic()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 logger.debug("resolve %r: timed out (best=%.3f)", target_label, best)
                 return None
@@ -532,7 +666,6 @@ class UIAGrounding(GroundingInterface):
         is_aux = getattr(element, "_from_aux", False)
 
         def _invoke() -> bool:
-            import comtypes  # type: ignore[import-untyped]
             import uiautomation as auto
 
             native = element.native
@@ -540,7 +673,8 @@ class UIAGrounding(GroundingInterface):
             # Re-resolve if stale.
             if native is None or not native.Exists(0, 0):
                 target_norm = _normalize(element.label)
-                resolved, _, _ = self._search_once(target_norm, auto, is_aux=is_aux)
+                deadline = time.monotonic() + self.timeout_sec
+                resolved, _, _ = self._search_once(target_norm, auto, is_aux=is_aux, deadline=deadline)
                 if resolved is None or resolved.native is None:
                     return False
                 native = resolved.native
@@ -550,40 +684,32 @@ class UIAGrounding(GroundingInterface):
                 pat = native.GetPattern(auto.PatternId.InvokePattern)
                 if pat is not None and pat.Invoke():
                     return True
-            except comtypes.COMError:
-                logger.debug("InvokePattern.Invoke COM error", exc_info=True)
-            except Exception:
-                logger.debug("InvokePattern.Invoke error", exc_info=True)
+            except Exception:  # COM errors included: try the next pattern
+                logger.debug("InvokePattern.Invoke failed", exc_info=True)
 
             # 2. ExpandCollapsePattern
             try:
                 pat = native.GetPattern(auto.PatternId.ExpandCollapsePattern)
                 if pat is not None and pat.Expand():
                     return True
-            except comtypes.COMError:
-                logger.debug("ExpandCollapsePattern.Expand COM error", exc_info=True)
-            except Exception:
-                logger.debug("ExpandCollapsePattern.Expand error", exc_info=True)
+            except Exception:  # COM errors included: try the next pattern
+                logger.debug("ExpandCollapsePattern.Expand failed", exc_info=True)
 
             # 3. TogglePattern (Win11 Start button uses this, not Invoke)
             try:
                 pat = native.GetPattern(auto.PatternId.TogglePattern)
                 if pat is not None and pat.Toggle():
                     return True
-            except comtypes.COMError:
-                logger.debug("TogglePattern.Toggle COM error", exc_info=True)
-            except Exception:
-                logger.debug("TogglePattern.Toggle error", exc_info=True)
+            except Exception:  # COM errors included: try the next pattern
+                logger.debug("TogglePattern.Toggle failed", exc_info=True)
 
             # 4. SelectionItemPattern
             try:
                 pat = native.GetPattern(auto.PatternId.SelectionItemPattern)
                 if pat is not None and pat.Select():
                     return True
-            except comtypes.COMError:
-                logger.debug("SelectionItemPattern.Select COM error", exc_info=True)
-            except Exception:
-                logger.debug("SelectionItemPattern.Select error", exc_info=True)
+            except Exception:  # COM errors included: try the next pattern
+                logger.debug("SelectionItemPattern.Select failed", exc_info=True)
 
             return False
 
@@ -622,7 +748,7 @@ class UIAGrounding(GroundingInterface):
 
             titles: list[str] = []
             try:
-                for child in auto.GetRootControl().GetChildren():
+                for child in _top_level_controls(auto):
                     try:
                         ct = child.ControlTypeName
                         if ct not in ("WindowControl", "PaneControl"):
