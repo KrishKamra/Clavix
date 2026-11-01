@@ -53,7 +53,7 @@ from clavix.core.verifier import StateVerifier
 from clavix.evaluation.metrics import word_error_rate
 from clavix.execution.native_ops import NativeOps
 from clavix.modules.acoustic import AcousticInterface
-from clavix.modules.feedback import FeedbackInterface
+from clavix.modules.feedback import ConsoleFeedback, FeedbackInterface
 from clavix.modules.grounding import GroundingInterface
 from clavix.runtime import ComponentError, build_runtime, harden_stdio
 from clavix.schemas.actions import ActionStep
@@ -409,6 +409,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repeat", type=int, default=1, metavar="N", help="runs per task (default: 1)")
     parser.add_argument("--cleanup", action="store_true", help="kill processes each task started")
     parser.add_argument("--audio", action="store_true", help="speak each command from its recorded fixture")
+    parser.add_argument(
+        "--live-feedback",
+        action="store_true",
+        help="use the configured feedback (speech, HUD) instead of console output; adds speech time",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     harden_stdio()
@@ -420,8 +425,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     suite = BenchmarkSuite.load(resolve_repo_path(args.suite or config.benchmark.suite_path))
     if args.repeat < 1:
         parser.error("--repeat must be at least 1")
+    # Console feedback by default: blocking speech would add its own duration to execution time.
+    feedback = None if args.live_feedback else ConsoleFeedback()
     harness = BenchmarkHarness(
-        suite, config, planner_mode=args.planner, audio=args.audio, output_dir=args.output
+        suite,
+        config,
+        planner_mode=args.planner,
+        audio=args.audio,
+        output_dir=args.output,
+        feedback=feedback,
     )
     reports = asyncio.run(harness.run(args.tiers, repeat=args.repeat, cleanup=args.cleanup))
     csv_path, json_path = harness.write_results(reports)

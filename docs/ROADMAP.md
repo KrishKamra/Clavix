@@ -40,9 +40,9 @@ anyone else: every module is testable with the fakes and contract suites that al
 | P2-M3 | P2    | Audio fixtures for all 10 benchmark commands                      | `tests/fixtures/audio/<task_id>.wav` exists for every task       |
 | P3-M1 | P3    | `UIAGrounding.resolve_element` and `list_window_titles`           | Done                                                            |
 | P3-M2 | P3    | `invoke_element` (Invoke / ExpandCollapse / Toggle / click)       | Done                                                            |
-| P4-M1 | P4    | `TTSFeedback` (non-blocking queue on a dedicated thread)          | `FeedbackContract` passes                                       |
-| P4-M2 | P4    | Glass HUD per [design/HUD_DESIGN.md](design/HUD_DESIGN.md)        | HUD_DESIGN.md §7 checklist; Stop aborts a running task          |
-| P4-M3 | P4    | Global double-Escape abort hotkey                                 | Manual check: double-Esc during a run aborts it                 |
+| P4-M1 | P4    | `TTSFeedback` (non-blocking queue on a dedicated thread)          | Done                                                            |
+| P4-M2 | P4    | Glass HUD per [design/HUD_DESIGN.md](design/HUD_DESIGN.md)        | Done                                                            |
+| P4-M3 | P4    | Global double-Escape abort hotkey                                 | Done                                                            |
 | P1-1 | P1    | Planner accuracy metric and prompt hardening                      | Done: see the status below                                      |
 | P1-2 | P1    | Benchmark repetitions and process cleanup                         | Done: `--repeat N`, `--cleanup` (verified on Tier 3)            |
 | P1-3 | P1    | CI pipeline                                                       | ruff, mypy and pytest run on every PR (Windows and Ubuntu)      |
@@ -53,6 +53,15 @@ anyone else: every module is testable with the fakes and contract suites that al
   386 / p95 438 ms on CPU (see `tests/fixtures/audio/README.md`).
 - P2-M2: live sign-off with the WH-CH520 headset: 10 spoken commands in a row, all captured;
   9 exact and 1 word wrong ("node.txt"). Live `t_asr_ms` median 395 / p95 434 ms.
+
+**Status (2026-11-01): P4 is done and integrated** (`TTSFeedback` with the glass HUD is the default
+feedback module).
+- P4-M1 to P4-M3: `FeedbackContract` and 9 desktop tests pass (real SAPI speech; the HUD drives all
+  8 states and closes within 2 s). The HUD is a separate WebView2 process that never takes focus and
+  is excluded from screen capture (`hud_capture_visible: true` to record it).
+- `clavix-bench --planner reference --cleanup --live-feedback`: 10/10 with speech, HUD and hotkey live;
+  grounding skips the HUD window. The benchmark uses console feedback unless `--live-feedback` is
+  given, because blocking speech would add its own duration to execution time.
 
 **Status (2026-11-01): P3 is done and integrated** (`UIAGrounding` is the default grounding module).
 - P3-M1 / P3-M2: contract and desktop tests pass (Notepad File menu; Start opens and closes, checked by
@@ -89,7 +98,7 @@ Tier 3 needs P3's grounding):
 
 Order: **P4, then P3, then P2**. Feedback carries the least risk, and acoustic changes the
 input path, so it goes last. In practice P2 and then P3 finished first and are integrated
-(`WhisperAcoustic`, `UIAGrounding`); P4 integrates next.
+(`WhisperAcoustic`, `UIAGrounding`), and P4 (`TTSFeedback`) last. All four modules are integrated.
 
 1. Merge the member's PR once their contract suite and CI pass.
 2. P1 switches the module's `class` in `configs/default_config.yaml`.
