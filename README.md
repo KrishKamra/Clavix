@@ -29,7 +29,7 @@ Voice-to-action automation for the Windows desktop: local, closed-loop and verif
 [![Pydantic v2](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev)
 [![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org)
 
-[**Results**](docs/RESULTS.md) · [**Architecture**](docs/ARCHITECTURE.md) · [**Quick start**](#-quick-start) · [**Contributing**](CONTRIBUTING.md) · [**Cite**](#-citation)
+[**Paper**](docs/paper/Clavix_Research_Paper.pdf) · [**Results**](docs/RESULTS.md) · [**Architecture**](docs/ARCHITECTURE.md) · [**Quick start**](#-quick-start) · [**Contributing**](CONTRIBUTING.md) · [**Cite**](#-citation)
 
 </div>
 
@@ -186,6 +186,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 | Document | Read it to… |
 |---|---|
+| [**Research paper**](docs/paper/Clavix_Research_Paper.pdf) | read the full method, evaluation and lessons (6 pages, IEEE format) |
 | [**Results**](docs/RESULTS.md) | see every benchmark, the hardware and how to reproduce the numbers |
 | [**Architecture**](docs/ARCHITECTURE.md) | understand the loop, the dispatch ladder, plans and module contracts |
 | [HUD design](docs/design/HUD_DESIGN.md) | see the glass HUD's design system and Windows recipe |
@@ -195,8 +196,6 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 | [Changelog](CHANGELOG.md) | see what changed in each release |
 
 ## 👥 Team
-
-Built at the **Department of Artificial Intelligence, MPSTME, NMIMS University, Mumbai**.
 
 | Member | Built |
 |---|---|
@@ -209,6 +208,7 @@ More in [AUTHORS.md](AUTHORS.md).
 
 ## 📝 Citation
 
+The design and evaluation are described in the [**research paper**](docs/paper/Clavix_Research_Paper.pdf).
 If Clavix helps your research, please cite it ([CITATION.cff](CITATION.cff)):
 
 ```bibtex

@@ -1,7 +1,6 @@
 # Authors
 
-Clavix was designed and built by four students of the **Department of Artificial Intelligence,
-Mukesh Patel School of Technology Management & Engineering (MPSTME), NMIMS University, Mumbai, India**.
+Clavix was designed and built in Mumbai, India, by a team of four engineers.
 
 Each member owned one module and built it against a frozen interface contract, so the four modules
 could be developed in parallel and integrated through reviewed pull requests.

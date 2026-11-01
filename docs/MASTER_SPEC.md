@@ -18,7 +18,7 @@ Unlike brittle visual-only OS agents that predict raw pixel coordinates, Clavix 
 2. **Structural Grounding Path (Priority 2):** Accessibility Tree querying (UI Automation / AT-SPI) to resolve interactive elements by semantic identity and bounding rects.
 3. **Visual/Coordinate Fallback (Priority 3):** Strict coordinate-based mouse/keyboard interaction via PyAutoGUI only when prior paths fail.
 
-Every execution step passes through an explicit **State Verifier Loop** with telemetry logging for academic benchmarking (Task Success Rate, Latency Waterfall: ASR -> LLM -> OS Execution).
+Every execution step passes through an explicit **State Verifier Loop** with telemetry logging for benchmarking (Task Success Rate, Latency Waterfall: ASR -> LLM -> OS Execution).
 
 ---
 
@@ -141,7 +141,7 @@ The dispatcher:
 - Provides an automated test runner that iterates over a test suite file (`configs/benchmark_suite.json`) containing 10 foundational tasks across Tiers 1-3.
 - Executes each task sequentially, timing every phase via high-resolution monotonic clocks (`time.perf_counter()`).
 - Programmatically asserts ground-truth postconditions (e.g., checks if a URL process spawned, output files were written, or test screenshots exist).
-- Serializes telemetry results directly into `benchmarks/results_{timestamp}.csv` and `.json` to provide immediate datasets for academic tables.
+- Serializes telemetry results directly into `benchmarks/results_{timestamp}.csv` and `.json` to provide immediate datasets for research tables.
 
 ---
 
