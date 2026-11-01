@@ -191,6 +191,8 @@ class _WindowsGlass:
 
     def __init__(self, capture_visible: bool) -> None:
         self.capture_visible = capture_visible
+        if sys.platform != "win32":
+            raise OSError("Windows glass is only available on Windows")
         self.user32 = ctypes.WinDLL("user32", use_last_error=True)
         self.dwm = ctypes.WinDLL("dwmapi", use_last_error=True)
         self.hwnd = 0
