@@ -131,13 +131,26 @@ Accept a candidate only if its score is at least `min_match_score`.
   window entirely in every scope; it never takes focus, so it is never the foreground scope
   (see `docs/design/HUD_DESIGN.md` §6).
 
-**Search scopes**, in order. Stop at the first scope that yields an accepted candidate:
+**Search scopes**, in order. Stop at the first scope that yields an **exact** match (score 1.0):
 1. The foreground top-level window: `auto.GetForegroundControl().GetTopLevelControl()`.
-2. The taskbar: the root child with `ClassName == "Shell_TrayWnd"`.
-3. All other root children (`auto.GetRootControl().GetChildren()`), each walked with
-   `auto.WalkControl(root, maxDepth=self.max_depth)`.
+2. The taskbar: `FindWindowW("Shell_TrayWnd")`, then `auto.ControlFromHandle`.
+3. The other visible top-level windows, **front to back**, each walked with
+   `auto.WalkControl(root, maxDepth=self.max_depth)`; stop at the first window with an exact match.
+   List them with Win32 `EnumWindows` (visible and not DWM-cloaked), **not**
+   `GetRootControl().GetChildren()`: that walks hidden windows too and was observed blocking
+   indefinitely. Walk `Progman`/`WorkerW` (the desktop; ~10 s to walk) last.
 
-**Tie-break**, applied in order until one candidate remains:
+If no scope has an exact match, return the first partial match in scope order. Reason: with
+Notepad behind another window, "File" scored 0.90 on the taskbar's "File Explorer - 1 running
+window" and was clicked instead of Notepad's File menu (observed on Windows 11).
+
+**Deadline.** Check `timeout_sec` between individual UIA calls, not only between passes, and
+stop waiting for the worker at the deadline; on a timeout, return the partial match found so far
+or `None`. Score `Name`/`AutomationId` before reading the filter properties (fewer cross-process
+calls).
+
+**Tie-break** within one scope (or one window in scope 3), applied in order until one candidate remains
+(the implementation adds two keys: control elements before template parts, right after rule 1; and shallower depth, last):
 1. Higher score.
 2. Control-type priority: `ButtonControl`, `MenuItemControl`, `HyperlinkControl`,
    `TabItemControl`, `ListItemControl`, `TreeItemControl`, `CheckBoxControl`,

@@ -68,6 +68,17 @@ class TestActionStep:
         with pytest.raises(ValidationError):
             ActionStep.model_validate(step(**overrides))
 
+    def test_visual_fallback_click_needs_coordinates(self) -> None:
+        # Seen with llama3:8b: "click the start button" planned as VISUAL_FALLBACK without coordinates.
+        with pytest.raises(ValidationError, match="fallback_coord"):
+            ActionStep.model_validate(
+                step(
+                    action_type="VISUAL_FALLBACK",
+                    action_name="click_element",
+                    payload={"target_label": "Start"},
+                )
+            )
+
     def test_click_element_coord_tuple(self) -> None:
         s = ActionStep.model_validate(
             step(
@@ -195,6 +206,19 @@ class TestPlanner:
         assert len(llm.calls) == 3
         # The validation error is fed back to the model.
         assert "not a valid plan" in llm.calls[-1][-1]["content"]
+
+    def test_repair_turns_a_coordinate_less_fallback_into_grounding(self) -> None:
+        def click(kind: str) -> dict[str, object]:
+            return {
+                "steps": [
+                    step(action_type=kind, action_name="click_element", payload={"target_label": "Start"})
+                ]
+            }
+
+        llm = MockLLMClient([click("VISUAL_FALLBACK"), click("OS_GROUNDING")])
+        plan = asyncio.run(Planner(llm, max_retries=1).plan("click the start button"))
+        assert plan.steps[0].action_type is ActionType.OS_GROUNDING
+        assert "use OS_GROUNDING" in llm.calls[-1][-1]["content"]  # the model is told how to fix it
 
     def test_gives_up_after_retries(self) -> None:
         llm = MockLLMClient(["{}", "{}"])

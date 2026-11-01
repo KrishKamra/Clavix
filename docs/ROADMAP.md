@@ -38,8 +38,8 @@ anyone else: every module is testable with the fakes and contract suites that al
 | P2-M1 | P2    | `WhisperAcoustic` with a WAV-file source                          | `AcousticContract` passes on WAV fixtures                       |
 | P2-M2 | P2    | Live microphone source with energy-based endpointing              | Manual check: 10/10 short commands transcribed; `t_asr_ms` logged |
 | P2-M3 | P2    | Audio fixtures for all 10 benchmark commands                      | `tests/fixtures/audio/<task_id>.wav` exists for every task       |
-| P3-M1 | P3    | `UIAGrounding.resolve_element` and `list_window_titles`           | `GroundingContract` passes with `known_label = "Start"`         |
-| P3-M2 | P3    | `invoke_element` (Invoke / ExpandCollapse / Toggle / click)       | Desktop tests: Notepad "File" menu opens; Start menu opens      |
+| P3-M1 | P3    | `UIAGrounding.resolve_element` and `list_window_titles`           | Done                                                            |
+| P3-M2 | P3    | `invoke_element` (Invoke / ExpandCollapse / Toggle / click)       | Done                                                            |
 | P4-M1 | P4    | `TTSFeedback` (non-blocking queue on a dedicated thread)          | `FeedbackContract` passes                                       |
 | P4-M2 | P4    | Glass HUD per [design/HUD_DESIGN.md](design/HUD_DESIGN.md)        | HUD_DESIGN.md §7 checklist; Stop aborts a running task          |
 | P4-M3 | P4    | Global double-Escape abort hotkey                                 | Manual check: double-Esc during a run aborts it                 |
@@ -53,6 +53,17 @@ anyone else: every module is testable with the fakes and contract suites that al
   386 / p95 438 ms on CPU (see `tests/fixtures/audio/README.md`).
 - P2-M2: live sign-off with the WH-CH520 headset: 10 spoken commands in a row, all captured;
   9 exact and 1 word wrong ("node.txt"). Live `t_asr_ms` median 395 / p95 434 ms.
+
+**Status (2026-11-01): P3 is done and integrated** (`UIAGrounding` is the default grounding module).
+- P3-M1 / P3-M2: contract and desktop tests pass (Notepad File menu; Start opens and closes, checked by
+  toggle state). `clavix-bench --planner reference`: **Tier 3 9/9** (`--repeat 3`), all tiers 10/10;
+  every grounding step clicked the intended element ("File", "Start", "Search"), no coordinate fallback.
+- Polished on a real desktop: bounded searches (a slow desktop window and a blocking `GetChildren()`
+  had made a miss take minutes), exact matches beat partial ones (the taskbar's "File Explorer" had
+  won over Notepad's "File"), and the pure tests now run on Linux CI.
+- `--planner llm`, Tier 3: T3-01 and T3-03 pass 3/3. T3-02 fails: the model invents an unverifiable
+  postcondition (`window_title_contains:Windows Start menu`). Plans without coordinates for
+  `VISUAL_FALLBACK` now fail validation, so the repair round switches them to `OS_GROUNDING`.
 
 **Status (2026-11-01): P1-1 to P1-4 are done** (`llama3:8b`, `--repeat 3 --cleanup`, 30 runs each;
 Tier 3 needs P3's grounding):
@@ -75,9 +86,8 @@ Tier 3 needs P3's grounding):
 ## Phase 3: Integration (Person 1 leads)
 
 Order: **P4, then P3, then P2**. Feedback carries the least risk, and acoustic changes the
-input path, so it goes last. Exception: P2 finished first and is integrated already
-(`WhisperAcoustic` is the default acoustic module). It only affects voice input; the benchmark
-still passes text commands until P1-4 adds `--audio`.
+input path, so it goes last. In practice P2 and then P3 finished first and are integrated
+(`WhisperAcoustic`, `UIAGrounding`); P4 integrates next.
 
 1. Merge the member's PR once their contract suite and CI pass.
 2. P1 switches the module's `class` in `configs/default_config.yaml`.

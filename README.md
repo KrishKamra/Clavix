@@ -131,11 +131,13 @@ Faster-Whisper `base.en`) is the default, so interactive `uv run clavix` listens
 `input_device` in a git-ignored `configs/local.yaml` and pass `--config configs/local.yaml`.
 For typed input, set the class back to `clavix.modules.acoustic:ConsoleAcoustic`.
 
-Current stand-ins are `StubGrounding` (never resolves elements; coordinate clicks go through
-PyAutoGUI) and `ConsoleFeedback`. The benchmark passes text commands, so it doesn't use the
-microphone. A HUD abort button
-calls `FeedbackInterface.request_abort()`. Until grounding is integrated, Tier 3 benchmark
-tasks are expected to fail. That failure is the baseline.
+Grounding is integrated: `UIAGrounding` finds on-screen elements by accessible name in the
+Windows UI Automation tree (`uv sync --extra grounding`) and activates them through UIA
+patterns, with a coordinate click as the last resort. Tier 3 went from 0/3 (Phase 1, stub
+grounding) to 3/3 with reference plans.
+
+The remaining stand-in is `ConsoleFeedback`, until P4's TTS and glass HUD land. A HUD abort
+button calls `FeedbackInterface.request_abort()`.
 
 ## Safety
 

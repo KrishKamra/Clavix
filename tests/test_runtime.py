@@ -8,6 +8,7 @@ from clavix.config import ClavixConfig, ComponentConfig, load_config
 from clavix.modules.acoustic import AcousticInterface, ScriptedAcoustic
 from clavix.modules.feedback import ConsoleFeedback, FeedbackInterface
 from clavix.modules.grounding import GroundingInterface, StubGrounding, UIElement
+from clavix.modules.grounding_uia import UIAGrounding
 from clavix.runtime import ComponentError, build_runtime, load_component, window_titles_via
 from clavix.testing.contracts import AcousticContract, FeedbackContract, GroundingContract
 from clavix.testing.fakes import FakeGrounding, FakeNativeOps, RecordingFeedback
@@ -81,7 +82,7 @@ class TestLoadComponent:
 class TestBuildRuntime:
     def test_default_config_builds(self) -> None:
         runtime = build_runtime(load_config())
-        assert isinstance(runtime.grounding, StubGrounding)
+        assert isinstance(runtime.grounding, UIAGrounding)  # integrated in Phase 3; constructs without UIA
         assert isinstance(runtime.feedback, ConsoleFeedback)
 
     def test_feedback_abort_reaches_dispatcher(self) -> None:

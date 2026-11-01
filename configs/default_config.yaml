@@ -44,8 +44,8 @@ modules:
     # input_device: null = system default mic; or a sounddevice name such as "WH-CH520 MME".
     options: {model_size: base.en, device: cpu, compute_type: int8, beam_size: 1, silence_ms: 700, input_device: null}
   grounding:                  # Person 3
-    class: clavix.modules.grounding:StubGrounding
-    options: {}
+    class: clavix.modules.grounding_uia:UIAGrounding
+    options: {timeout_sec: 3.0, poll_interval_sec: 0.2, max_depth: 12, min_match_score: 0.8}
   feedback:                   # Person 4
     class: clavix.modules.feedback:ConsoleFeedback
     options: {}
