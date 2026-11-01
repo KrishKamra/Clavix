@@ -52,6 +52,7 @@ because ``uiautomation`` is never imported at module level.  The pure helpers
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
 import logging
 import queue
@@ -202,6 +203,7 @@ class _UIAWorker:
         self._work_queue: queue.SimpleQueue[Any] = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
         self._thread_lock = threading.Lock()
+        self._startup_error: BaseException | None = None
 
     def ensure_started(self) -> None:
         """Start the worker thread lazily on first use."""
@@ -231,9 +233,17 @@ class _UIAWorker:
             except Exception:
                 logger.debug("Failed to set thread desktop to %s", self.desktop_name, exc_info=True)
 
-        import uiautomation as auto
+        try:
+            import uiautomation as auto
 
-        with auto.UIAutomationInitializerInThread():
+            stack = contextlib.ExitStack()
+            stack.enter_context(auto.UIAutomationInitializerInThread())
+        except BaseException as exc:  # e.g. the grounding extra is not installed
+            logger.error("UIA worker %s could not start: %s", self.name, exc)
+            self._startup_error = exc
+            self._fail_pending(exc)
+            return
+        try:
             while True:
                 item = self._work_queue.get()
                 if item is _STOP:
@@ -245,12 +255,29 @@ class _UIAWorker:
                         future.set_result(result)
                     except Exception as exc:
                         future.set_exception(exc)
+        finally:
+            stack.close()
+
+    def _fail_pending(self, exc: BaseException) -> None:
+        """Fail every queued request, so no caller waits on a worker that never started."""
+        while True:
+            try:
+                item = self._work_queue.get_nowait()
+            except queue.Empty:
+                return
+            if item is not _STOP and item[0].set_running_or_notify_cancel():
+                item[0].set_exception(exc)
 
     def submit(self, fn: Any) -> Future[Any]:
         """Post a callable to this worker thread and return a Future for its result."""
-        self.ensure_started()
         fut: Future[Any] = Future()
+        if self._startup_error is not None:
+            fut.set_exception(self._startup_error)
+            return fut
+        self.ensure_started()
         self._work_queue.put((fut, fn))
+        if self._startup_error is not None:  # the worker failed while this was being queued
+            self._fail_pending(self._startup_error)
         return fut
 
     def close(self) -> None:
@@ -765,12 +792,21 @@ class UIAGrounding(GroundingInterface):
                 logger.debug("list_window_titles: GetChildren error", exc_info=True)
             return titles
 
-        fut = self._primary_worker.submit(_list)
-        titles: list[str] = fut.result()  # type: ignore[no-any-return]
+        def collect(worker: _UIAWorker) -> list[str]:
+            # Bounded: the verifier calls this, and must never hang on a stuck or dead worker.
+            try:
+                result: list[str] = worker.submit(_list).result(
+                    timeout=self.timeout_sec + _DEADLINE_SLACK_SEC
+                )
+            except Exception as exc:
+                logger.warning("list_window_titles failed: %r", exc)
+                return []
+            return result
+
+        titles = collect(self._primary_worker)
 
         # If primary has no windows and aux worker exists, collect from Default desktop.
         if not titles and self._aux_worker is not None:
-            aux_fut = self._aux_worker.submit(_list)
-            titles = aux_fut.result()  # type: ignore[no-any-return]
+            titles = collect(self._aux_worker)
 
         return titles

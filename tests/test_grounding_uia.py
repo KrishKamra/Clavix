@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import sys
 import time
 import types
@@ -26,8 +27,12 @@ from clavix.modules.grounding import UIElement
 from clavix.modules.grounding_uia import UIAGrounding, _normalize, _score
 from clavix.testing.contracts import GroundingContract
 
-# Only the UIA-backed suites need Windows; the pure tests below run everywhere, including Linux CI.
-windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows UI Automation")
+# Only the UIA-backed suites need Windows and the grounding extra; the pure tests run everywhere,
+# including CI, which installs no extras.
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32" or importlib.util.find_spec("uiautomation") is None,
+    reason="needs Windows UI Automation (uv sync --extra grounding)",
+)
 
 # ---------------------------------------------------------------------------
 # Pure-function unit tests (no UIA, runs on Linux)
@@ -278,6 +283,34 @@ class TestDeadlines:
             assert time.monotonic() - start < 1.0
         finally:
             g.close()
+
+
+class TestWorkerStartupFailure:
+    """Without uiautomation (e.g. the grounding extra not installed) nothing may hang."""
+
+    @pytest.fixture
+    def no_uia(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "uiautomation", None)  # any import of it now fails
+
+    def test_list_window_titles_returns_empty_instead_of_hanging(self, no_uia: None) -> None:
+        g = UIAGrounding(timeout_sec=0.5)
+        start = time.monotonic()
+        try:
+            assert g.list_window_titles() == []
+            assert g.list_window_titles() == []  # and again, after the worker has died
+        finally:
+            g.close()
+        assert time.monotonic() - start < 2.0
+
+    def test_resolve_element_raises_promptly(self, no_uia: None) -> None:
+        g = UIAGrounding(timeout_sec=5.0)
+        start = time.monotonic()
+        try:
+            with pytest.raises(ImportError):
+                asyncio.run(g.resolve_element("Start"))
+        finally:
+            g.close()
+        assert time.monotonic() - start < 2.0
 
 
 class _Rect:
