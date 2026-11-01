@@ -435,7 +435,13 @@ class TestDesktop:
         before = list_pids(["notepad.exe"])
         subprocess.Popen(["notepad.exe"])
         try:
-            file_elem = asyncio.run(grounding.resolve_element("File"))  # polls while Notepad starts
+            # Wait for the window first, as the agent does (T3-01's window_title_contains:Notepad).
+            # Resolving earlier matches another app's exact "File" (a PDF viewer's, in testing).
+            deadline = time.monotonic() + 10
+            while not any("Notepad" in title for title in grounding.list_window_titles()):
+                assert time.monotonic() < deadline, "Notepad did not open"
+                time.sleep(0.2)
+            file_elem = asyncio.run(grounding.resolve_element("File"))
             assert file_elem is not None, "Could not find 'File' in Notepad"
             assert asyncio.run(grounding.invoke_element(file_elem)), (
                 "invoke_element returned False for 'File'"
