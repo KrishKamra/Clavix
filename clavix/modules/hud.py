@@ -189,6 +189,12 @@ class _Margins(ctypes.Structure):
 class _WindowsGlass:
     """Native window recipe from HUD_DESIGN section 3, in its prescribed order."""
 
+    # ctypes DLL symbols are untyped and unavailable to Linux's platform stubs.
+    user32: Any
+    dwm: Any
+    hwnd: int
+    previous: int | None
+
     def __init__(self, capture_visible: bool) -> None:
         self.capture_visible = capture_visible
         if sys.platform != "win32":
