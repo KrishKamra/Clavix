@@ -47,5 +47,5 @@ modules:
     class: clavix.modules.grounding_uia:UIAGrounding
     options: {timeout_sec: 3.0, poll_interval_sec: 0.2, max_depth: 12, min_match_score: 0.8}
   feedback:                   # Person 4
-    class: clavix.modules.feedback:ConsoleFeedback
-    options: {}
+    class: clavix.modules.feedback_tts:TTSFeedback
+    options: {rate: 190, volume: 1.0, show_hud: true, abort_hotkey: true}

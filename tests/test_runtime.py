@@ -7,6 +7,7 @@ import pytest
 from clavix.config import ClavixConfig, ComponentConfig, load_config
 from clavix.modules.acoustic import AcousticInterface, ScriptedAcoustic
 from clavix.modules.feedback import ConsoleFeedback, FeedbackInterface
+from clavix.modules.feedback_tts import TTSFeedback
 from clavix.modules.grounding import GroundingInterface, StubGrounding, UIElement
 from clavix.modules.grounding_uia import UIAGrounding
 from clavix.runtime import ComponentError, build_runtime, load_component, window_titles_via
@@ -83,7 +84,7 @@ class TestBuildRuntime:
     def test_default_config_builds(self) -> None:
         runtime = build_runtime(load_config())
         assert isinstance(runtime.grounding, UIAGrounding)  # integrated in Phase 3; constructs without UIA
-        assert isinstance(runtime.feedback, ConsoleFeedback)
+        assert isinstance(runtime.feedback, TTSFeedback)  # integrated in Phase 4; constructs without pyttsx3
 
     def test_feedback_abort_reaches_dispatcher(self) -> None:
         runtime = build_runtime(ClavixConfig(), feedback=RecordingFeedback(), native=FakeNativeOps())
